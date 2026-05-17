@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { exchangeAuthorizationCode } from "@/lib/oauth/etsy-oauth-server";
-import { getMe, getUserShop } from "@/lib/etsy/api";
+import { getUserIdFromToken, getUserShop } from "@/lib/etsy/api";
 import { createSupabaseServerClient } from "@/lib/supabase";
 
 const STATE_COOKIE = "ssh_etsy_oauth_state";
@@ -82,9 +82,10 @@ export async function GET(request: NextRequest) {
   const { access_token, refresh_token } = exchanged.tokens;
 
   try {
-    // Resolve which shop this token belongs to
-    const user = await getMe(access_token);
-    const shop = await getUserShop(user.user_id, access_token);
+    // The user_id is embedded as the first segment of the Etsy access token.
+    // Per Etsy docs: "An Etsy access token includes your shop/user ID as a token prefix."
+    const userId = getUserIdFromToken(access_token);
+    const shop = await getUserShop(userId, access_token);
 
     const supabase = createSupabaseServerClient();
 

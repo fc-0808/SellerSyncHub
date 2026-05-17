@@ -1,7 +1,12 @@
 /**
  * Etsy Open API v3 client — server-side only.
- * Uses Authorization: Bearer {access_token} + x-api-key: {keystring}.
- * The shared secret is only used in the OAuth token exchange, not here.
+ *
+ * Per the official Etsy quickstart, authenticated API calls require:
+ *   Authorization: Bearer {access_token}
+ *   x-api-key: {keystring}:{shared_secret}   ← both parts, colon-separated
+ *
+ * The user_id is embedded as the first segment of the access token
+ * (before the first '.'), so no separate /users/me call is needed.
  */
 
 import type {
@@ -20,11 +25,22 @@ function getKeystring(): string {
   return k;
 }
 
+function getSharedSecret(): string {
+  const s = process.env.ETSY_API_SHARED_SECRET?.trim();
+  if (!s) throw new Error("Missing ETSY_API_SHARED_SECRET environment variable");
+  return s;
+}
+
+/** Etsy authenticated API calls need keystring:secret in x-api-key */
+function getApiKeyHeader(): string {
+  return `${getKeystring()}:${getSharedSecret()}`;
+}
+
 async function etsyGet<T>(path: string, accessToken: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
-      "x-api-key": getKeystring(),
+      "x-api-key": getApiKeyHeader(),
       Accept: "application/json",
     },
     cache: "no-store",
@@ -49,12 +65,24 @@ export class EtsyApiError extends Error {
   get isUnauthorized() { return this.status === 401; }
 }
 
-/** Get the currently authenticated Etsy user */
-export async function getMe(accessToken: string): Promise<EtsyUser> {
-  return etsyGet<EtsyUser>("/users/me", accessToken);
+/**
+ * Extract the user_id embedded in the Etsy access token prefix.
+ * Per Etsy docs: "An Etsy access token includes your shop/user ID
+ * as a token prefix" — split on '.' and take the first segment.
+ */
+export function getUserIdFromToken(accessToken: string): number {
+  const prefix = accessToken.split(".")[0];
+  const id = parseInt(prefix, 10);
+  if (isNaN(id)) throw new Error(`Cannot parse user_id from token prefix: "${prefix}"`);
+  return id;
 }
 
-/** Get the shop owned by a given user_id */
+/** Get the currently authenticated Etsy user by user_id */
+export async function getUser(userId: number, accessToken: string): Promise<EtsyUser> {
+  return etsyGet<EtsyUser>(`/users/${userId}`, accessToken);
+}
+
+/** Get the shop owned by a given user_id (requires shops_r scope) */
 export async function getUserShop(userId: number, accessToken: string): Promise<EtsyShop> {
   return etsyGet<EtsyShop>(`/users/${userId}/shops`, accessToken);
 }
@@ -129,7 +157,6 @@ export function computeShipDate(receipt: {
       return new Date(t.expected_ship_date * 1000);
     }
   }
-  // Fallback: creation + max processing days
   const maxDays = receipt.transactions.reduce(
     (max, t) => Math.max(max, t.max_processing_days ?? 3),
     1
