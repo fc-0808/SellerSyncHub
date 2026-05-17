@@ -157,7 +157,7 @@ export default function OrdersTable({ orders, shops }: Props) {
       {filtered.length === 0 ? (
         <EmptyState />
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2.5">
           {filtered.map((order) => (
             <OrderCard
               key={order.receipt_id}

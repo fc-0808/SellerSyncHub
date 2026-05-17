@@ -34,6 +34,8 @@ export interface EtsyTransaction {
   selected_variations: SelectedVariation[];
   /** Listing images — first entry is the primary product photo */
   images: TransactionImage[];
+  /** Direct image URL — returned on ShopReceiptTransaction objects */
+  image_url_75x75: string | null;
 }
 
 export interface EtsyReceipt {

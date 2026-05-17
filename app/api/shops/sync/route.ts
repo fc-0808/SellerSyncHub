@@ -113,7 +113,13 @@ export async function POST(request: NextRequest) {
           transaction_id: t.transaction_id,
           title: t.title,
           quantity: t.quantity ?? 1,
-          image_url: t.images?.[0]?.url_170x135 ?? null,
+          // Etsy receipts expose image_url_75x75 directly on the transaction;
+          // the images[] array is often empty in receipt responses
+          image_url:
+            t.images?.[0]?.url_170x135 ??
+            t.images?.[0]?.url_75x75 ??
+            t.image_url_75x75 ??
+            null,
           variations: (t.selected_variations ?? []).map((v) => ({
             name: v.formatted_name,
             value: v.formatted_value,
