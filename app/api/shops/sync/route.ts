@@ -225,6 +225,38 @@ export async function POST(request: NextRequest) {
         if (upsertErr) throw upsertErr;
       }
 
+      // ── Auto-close orders that Etsy no longer returns as open ────────────
+      // Root cause fix: if an order is in our DB as is_shipped=false but Etsy
+      // did NOT include it in the was_shipped=false query results (because the
+      // seller shipped it on Etsy's platform since our last sync), we must
+      // mark it shipped in our DB so it stops appearing in the open view.
+      const fetchedIds = new Set(allReceipts.map((r) => r.receipt_id));
+      const windowCutoff = new Date(
+        Date.now() - 60 * 24 * 60 * 60 * 1000
+      ).toISOString();
+
+      const { data: stillOpenInDb } = await supabase
+        .from("etsy_orders")
+        .select("receipt_id")
+        .eq("shop_id", shop.shop_id)
+        .eq("is_shipped", false)
+        .gte("etsy_created_at", windowCutoff);
+
+      const nowGoneFromEtsy = (stillOpenInDb ?? [])
+        .map((o) => o.receipt_id as number)
+        .filter((id) => !fetchedIds.has(id));
+
+      if (nowGoneFromEtsy.length > 0) {
+        console.log(
+          `[sync] auto-marking ${nowGoneFromEtsy.length} order(s) as shipped — no longer open on Etsy:`,
+          nowGoneFromEtsy
+        );
+        await supabase
+          .from("etsy_orders")
+          .update({ is_shipped: true })
+          .in("receipt_id", nowGoneFromEtsy);
+      }
+
       // Update last_synced_at on the shop
       await supabase
         .from("connected_shops")
