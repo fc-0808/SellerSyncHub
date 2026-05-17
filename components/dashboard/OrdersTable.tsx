@@ -39,24 +39,21 @@ export default function OrdersTable({ orders, shops }: Props) {
   const [statusFilter, setStatusFilter] = useState<string>("open");
   // receipt_ids that have been optimistically marked shipped in this session
   const [localShipped, setLocalShipped] = useState<Set<number>>(new Set());
-  const [pending, startTransition] = useTransition();
-  void pending;
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  void isPending;
 
   async function markShipped(receiptId: number) {
-    // Optimistically hide the row immediately
     setLocalShipped((prev) => new Set([...prev, receiptId]));
-
     try {
       const res = await fetch(`/api/orders/${receiptId}`, { method: "PATCH" });
       if (!res.ok) {
-        // Rollback on failure
         setLocalShipped((prev) => {
           const next = new Set(prev);
           next.delete(receiptId);
           return next;
         });
       } else {
-        // Refresh server data in background so stats update
         startTransition(() => router.refresh());
       }
     } catch {
@@ -67,6 +64,47 @@ export default function OrdersTable({ orders, shops }: Props) {
       });
     }
   }
+
+  async function markAllOverdueShipped() {
+    const overdueIds = orders
+      .filter((o) => {
+        if (o.is_shipped || localShipped.has(o.receipt_id)) return false;
+        const info = getUrgencyInfo(o.expected_ship_date, false);
+        return info.level === "overdue";
+      })
+      .map((o) => o.receipt_id);
+
+    if (overdueIds.length === 0) return;
+    setBulkLoading(true);
+
+    // Optimistically hide all at once
+    setLocalShipped((prev) => new Set([...prev, ...overdueIds]));
+
+    try {
+      await Promise.all(
+        overdueIds.map((id) => fetch(`/api/orders/${id}`, { method: "PATCH" }))
+      );
+      startTransition(() => router.refresh());
+    } catch {
+      // On any failure, rollback all
+      setLocalShipped((prev) => {
+        const next = new Set(prev);
+        overdueIds.forEach((id) => next.delete(id));
+        return next;
+      });
+    } finally {
+      setBulkLoading(false);
+    }
+  }
+
+  const overdueCount = useMemo(
+    () =>
+      orders.filter((o) => {
+        if (o.is_shipped || localShipped.has(o.receipt_id)) return false;
+        return getUrgencyInfo(o.expected_ship_date, false).level === "overdue";
+      }).length,
+    [orders, localShipped]
+  );
 
   const filtered = useMemo(() => {
     return orders
@@ -118,6 +156,19 @@ export default function OrdersTable({ orders, shops }: Props) {
         <span className="ml-auto text-xs text-slate-400">
           {filtered.length} order{filtered.length !== 1 ? "s" : ""}
         </span>
+
+        {overdueCount > 0 && statusFilter === "open" && (
+          <button
+            onClick={markAllOverdueShipped}
+            disabled={bulkLoading}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 shadow-sm hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            <Check className="h-3.5 w-3.5" strokeWidth={2.5} />
+            {bulkLoading
+              ? "Marking…"
+              : `Mark all overdue as shipped (${overdueCount})`}
+          </button>
+        )}
       </div>
 
       {/* Table */}
