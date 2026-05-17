@@ -257,6 +257,20 @@ export async function POST(request: NextRequest) {
           .in("receipt_id", nowGoneFromEtsy);
       }
 
+      // ── Purge shipped orders older than 45 days ──────────────────────────
+      // Keeps the DB clean: we only need shipped records for recent history.
+      // (Open orders are protected by the was_shipped=false query; only shipped
+      //  rows accumulate indefinitely without this cleanup.)
+      const purgeOlderThan = new Date(
+        Date.now() - 45 * 24 * 60 * 60 * 1000
+      ).toISOString();
+      await supabase
+        .from("etsy_orders")
+        .delete()
+        .eq("shop_id", shop.shop_id)
+        .eq("is_shipped", true)
+        .lt("etsy_created_at", purgeOlderThan);
+
       // Update last_synced_at on the shop
       await supabase
         .from("connected_shops")
