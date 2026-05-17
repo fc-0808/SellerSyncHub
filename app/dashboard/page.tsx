@@ -66,14 +66,18 @@ async function getOrdersData() {
 function buildStats(
   orders: Awaited<ReturnType<typeof getOrdersData>>["orders"]
 ) {
-  let open = 0,
-    urgent = 0,
-    atRisk = 0,
-    shipped = 0;
+  let open = 0, urgent = 0, atRisk = 0, shippedThisWeek = 0;
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
 
   for (const o of orders) {
     if (o.is_shipped) {
-      shipped++;
+      // Only count orders dispatched within the last 7 days.
+      // Our TTL prune removes them from the DB after that, so this
+      // stat reflects "dispatched this week" — a meaningful activity
+      // metric, not a cumulative count of all historical shipments.
+      if (o.shipped_at && new Date(o.shipped_at).getTime() > weekAgo) {
+        shippedThisWeek++;
+      }
       continue;
     }
     open++;
@@ -82,7 +86,7 @@ function buildStats(
     else if (u.level === "warning") atRisk++;
   }
 
-  return { open, urgent, atRisk, shipped };
+  return { open, urgent, atRisk, shipped: shippedThisWeek };
 }
 
 export default async function DashboardPage() {
@@ -129,7 +133,7 @@ export default async function DashboardPage() {
           />
           <StatCard
             icon={<CheckCircle2 className="h-5 w-5" />}
-            label="Shipped"
+            label="Shipped This Week"
             value={stats.shipped}
             colorClass="text-emerald-600 bg-emerald-50"
           />
