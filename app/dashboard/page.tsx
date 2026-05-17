@@ -20,7 +20,7 @@ async function getOrdersData() {
     supabase
       .from("etsy_orders")
       .select(
-        "receipt_id, shop_id, buyer_name, item_count, item_titles, expected_ship_date, is_shipped, receipt_state, etsy_created_at, ship_address, ship_country_iso, buyer_message, seller_note, transactions_json, connected_shops!inner(shop_name, shop_icon_url)"
+        "receipt_id, shop_id, buyer_name, item_count, item_titles, expected_ship_date, is_shipped, receipt_state, etsy_created_at, ship_address, ship_country_iso, buyer_message, seller_note, transactions_json, tracking_number, shipped_at, connected_shops!inner(shop_name, shop_icon_url)"
       )
       .order("expected_ship_date", { ascending: true, nullsFirst: false })
       .limit(500),
@@ -55,6 +55,8 @@ async function getOrdersData() {
       seller_note: o.seller_note as string | null,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       transactions: ((o.transactions_json as any[]) ?? []),
+      tracking_number: o.tracking_number as string | null,
+      shipped_at: o.shipped_at as string | null,
     };
   });
 

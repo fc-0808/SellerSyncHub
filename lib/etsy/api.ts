@@ -56,6 +56,31 @@ async function etsyGet<T>(path: string, accessToken: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+async function etsyPost<T>(
+  path: string,
+  accessToken: string,
+  payload: Record<string, unknown>
+): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "x-api-key": getApiKeyHeader(),
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(payload),
+    cache: "no-store",
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new EtsyApiError(res.status, body);
+  }
+
+  return res.json() as Promise<T>;
+}
+
 export class EtsyApiError extends Error {
   constructor(
     public readonly status: number,
@@ -203,6 +228,30 @@ export async function refreshAccessToken(
   }
 
   return res.json() as Promise<EtsyTokenResponse>;
+}
+
+/**
+ * Create a shipment / add tracking to a receipt on Etsy.
+ * Requires the `transactions_w` OAuth scope on the access token.
+ * Throws EtsyApiError if the scope is missing (401) — callers should
+ * catch this and fall back to local-only marking.
+ */
+export async function createEtsyShipment(
+  shopId: number,
+  receiptId: number,
+  accessToken: string,
+  trackingCode: string,
+  carrierName = "other"
+): Promise<void> {
+  await etsyPost(
+    `/shops/${shopId}/receipts/${receiptId}/tracking`,
+    accessToken,
+    {
+      carrier_name: carrierName.toLowerCase(),
+      tracking_code: trackingCode,
+      send_bcc: false,
+    }
+  );
 }
 
 /**

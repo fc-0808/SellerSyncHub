@@ -21,7 +21,7 @@ const ETSY_TOKEN = "https://api.etsy.com/v3/public/oauth/token";
  *   transactions_r — read receipts, shipping addresses (required for OMS)
  *   listings_r     — read inactive/expired listings for order context
  */
-const DEFAULT_SCOPES = ["shops_r", "transactions_r", "listings_r"];
+const DEFAULT_SCOPES = ["shops_r", "transactions_r", "transactions_w", "listings_r"];
 
 function getKeystring(): string {
   const v = process.env.ETSY_API_KEYSTRING?.trim();
