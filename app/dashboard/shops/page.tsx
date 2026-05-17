@@ -62,6 +62,7 @@ export default async function ShopsPage({
             <a
               href="/api/oauth/authorize"
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
+              data-no-prefetch
             >
               <Plus className="h-4 w-4" strokeWidth={2.5} />
               Connect Shop

@@ -100,7 +100,8 @@ export async function POST(request: NextRequest) {
         return {
           shop_id: shop.shop_id,
           receipt_id: r.receipt_id,
-          receipt_state: r.receipt_state,
+          // Etsy can return null receipt_state for some in-progress orders
+          receipt_state: r.receipt_state ?? "open",
           is_shipped: r.is_shipped,
           is_paid: r.is_paid,
           buyer_name: r.name ?? null,
@@ -136,7 +137,12 @@ export async function POST(request: NextRequest) {
 
       results.push({ shop_id: shop.shop_id, shop_name: shop.shop_name, upserted: rows.length });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg =
+        e instanceof Error
+          ? e.message
+          : typeof e === "object" && e !== null && "message" in e
+          ? String((e as { message: unknown }).message)
+          : JSON.stringify(e);
       console.error(`[sync] shop ${shop.shop_id} failed:`, msg);
       results.push({ shop_id: shop.shop_id, shop_name: shop.shop_name, upserted: 0, error: msg });
     }

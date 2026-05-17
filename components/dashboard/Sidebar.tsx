@@ -91,13 +91,15 @@ function SidebarContent({ onClose }: { onClose?: () => void }) {
 
       {/* Footer */}
       <div className="border-t border-slate-800 px-3 py-4 space-y-1">
-        <Link
+        {/* Use <a> not <Link> — this triggers a server-side 302 to Etsy OAuth.
+            Link prefetch would follow the redirect cross-origin and throw a CORS error. */}
+        <a
           href="/api/oauth/authorize"
           className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
         >
           <RefreshCw className="h-4 w-4 shrink-0" strokeWidth={1.8} />
           Connect Shop
-        </Link>
+        </a>
         <Link
           href="/"
           target="_blank"
