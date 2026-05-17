@@ -78,11 +78,22 @@ export function buildEtsyAuthorizeRedirectUrl(requestOrigin: string): {
   };
 }
 
+export interface EtsyTokens {
+  access_token: string;
+  refresh_token: string;
+  token_type: string;
+  expires_in: number;
+}
+
+export type ExchangeResult =
+  | { ok: true; status: number; tokens: EtsyTokens }
+  | { ok: false; status: number; body: string };
+
 export async function exchangeAuthorizationCode(
   code: string,
   codeVerifier: string,
   redirectUri: string
-): Promise<{ ok: true; data: unknown } | { ok: false; status: number; body: string }> {
+): Promise<ExchangeResult> {
   const keystring = getKeystring();
   const secret = getSharedSecret();
 
@@ -101,6 +112,7 @@ export async function exchangeAuthorizationCode(
       "x-api-key": `${keystring}:${secret}`,
     },
     body: body.toString(),
+    cache: "no-store",
   });
 
   const text = await res.text();
@@ -109,8 +121,9 @@ export async function exchangeAuthorizationCode(
   }
 
   try {
-    return { ok: true, data: JSON.parse(text) as unknown };
+    const tokens = JSON.parse(text) as EtsyTokens;
+    return { ok: true, status: res.status, tokens };
   } catch {
-    return { ok: true, data: text };
+    return { ok: false, status: res.status, body: "Unexpected non-JSON token response" };
   }
 }

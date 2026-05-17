@@ -68,16 +68,16 @@ export default function Navbar() {
 
           {/* Desktop CTAs */}
           <div className="hidden md:flex items-center gap-2.5 shrink-0">
-            <a
-              href="#waitlist"
+            <Link
+              href="/dashboard"
               className={`text-sm font-medium px-3 py-2 rounded-lg transition-all duration-150 ${
                 scrolled
                   ? "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                   : "text-white/75 hover:text-white hover:bg-white/10"
               }`}
             >
-              Log In
-            </a>
+              Dashboard
+            </Link>
             <a
               href="#waitlist"
               className="inline-flex items-center justify-center rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white
@@ -119,13 +119,13 @@ export default function Navbar() {
               </a>
             ))}
             <div className="mt-3 flex flex-col gap-2 px-3 pb-2 border-t border-slate-100 pt-3">
-              <a
-                href="#waitlist"
+              <Link
+                href="/dashboard"
                 onClick={() => setMenuOpen(false)}
                 className="block text-center rounded-lg border border-slate-200 px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
               >
-                Log In
-              </a>
+                Dashboard
+              </Link>
               <a
                 href="#waitlist"
                 onClick={() => setMenuOpen(false)}

@@ -1,0 +1,152 @@
+import { NextRequest, NextResponse } from "next/server";
+import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  getOpenReceipts,
+  refreshAccessToken,
+  computeShipDate,
+  EtsyApiError,
+} from "@/lib/etsy/api";
+
+interface SyncResult {
+  shop_id: number;
+  shop_name: string;
+  upserted: number;
+  error?: string;
+}
+
+/**
+ * POST /api/shops/sync
+ * Fetches open receipts from Etsy for all (or one) connected shop(s)
+ * and upserts them into the etsy_orders table.
+ *
+ * Optional query param: ?shop_id=xxx  — sync only that shop
+ */
+export async function POST(request: NextRequest) {
+  const shopIdParam = request.nextUrl.searchParams.get("shop_id");
+  const supabase = createSupabaseServerClient();
+
+  // Fetch target shops
+  let query = supabase
+    .from("connected_shops")
+    .select("shop_id, shop_name, access_token, refresh_token")
+    .eq("is_active", true);
+
+  if (shopIdParam) {
+    query = query.eq("shop_id", Number(shopIdParam));
+  }
+
+  const { data: shops, error: shopsErr } = await query;
+  if (shopsErr) {
+    return NextResponse.json({ error: "Failed to load shops" }, { status: 500 });
+  }
+  if (!shops?.length) {
+    return NextResponse.json({ error: "No connected shops found" }, { status: 404 });
+  }
+
+  const results: SyncResult[] = [];
+
+  for (const shop of shops) {
+    let accessToken: string = shop.access_token;
+
+    try {
+      // Attempt fetch; if 401 try to refresh the token first
+      let receiptsResponse = await getOpenReceipts(
+        shop.shop_id,
+        accessToken
+      ).catch(async (e: unknown) => {
+        if (e instanceof EtsyApiError && e.isUnauthorized && shop.refresh_token) {
+          const fresh = await refreshAccessToken(shop.refresh_token);
+          accessToken = fresh.access_token;
+          // Persist refreshed tokens
+          await supabase
+            .from("connected_shops")
+            .update({
+              access_token: fresh.access_token,
+              refresh_token: fresh.refresh_token,
+            })
+            .eq("shop_id", shop.shop_id);
+          return getOpenReceipts(shop.shop_id, accessToken);
+        }
+        throw e;
+      });
+
+      // Paginate if more than 100 receipts
+      let allReceipts = receiptsResponse.results;
+      while (
+        receiptsResponse.count > allReceipts.length &&
+        receiptsResponse.results.length === 100
+      ) {
+        receiptsResponse = await getOpenReceipts(
+          shop.shop_id,
+          accessToken,
+          100,
+          allReceipts.length
+        );
+        allReceipts = allReceipts.concat(receiptsResponse.results);
+      }
+
+      // Build upsert rows
+      const rows = allReceipts.map((r) => {
+        const shipDate = computeShipDate(r);
+        const itemTitles = [
+          ...new Set(r.transactions.map((t) => t.title).filter(Boolean)),
+        ];
+        const totalCents = Math.round(
+          (r.grandtotal?.amount ?? r.total_price?.amount ?? 0) /
+            (r.grandtotal?.divisor ?? r.total_price?.divisor ?? 100) *
+            100
+        );
+
+        return {
+          shop_id: shop.shop_id,
+          receipt_id: r.receipt_id,
+          receipt_state: r.receipt_state,
+          is_shipped: r.is_shipped,
+          is_paid: r.is_paid,
+          buyer_name: r.name ?? null,
+          total_price_cents: totalCents,
+          currency_code:
+            r.grandtotal?.currency_code ?? r.total_price?.currency_code ?? "USD",
+          item_count: r.transactions.reduce((s, t) => s + (t.quantity ?? 1), 0),
+          item_titles: itemTitles,
+          expected_ship_date: shipDate?.toISOString() ?? null,
+          etsy_created_at: new Date(
+            (r.created_timestamp ?? r.create_timestamp) * 1000
+          ).toISOString(),
+          etsy_updated_at: new Date(
+            (r.updated_timestamp ?? r.update_timestamp) * 1000
+          ).toISOString(),
+          synced_at: new Date().toISOString(),
+        };
+      });
+
+      if (rows.length > 0) {
+        const { error: upsertErr } = await supabase
+          .from("etsy_orders")
+          .upsert(rows, { onConflict: "receipt_id" });
+
+        if (upsertErr) throw upsertErr;
+      }
+
+      // Update last_synced_at on the shop
+      await supabase
+        .from("connected_shops")
+        .update({ last_synced_at: new Date().toISOString() })
+        .eq("shop_id", shop.shop_id);
+
+      results.push({ shop_id: shop.shop_id, shop_name: shop.shop_name, upserted: rows.length });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`[sync] shop ${shop.shop_id} failed:`, msg);
+      results.push({ shop_id: shop.shop_id, shop_name: shop.shop_name, upserted: 0, error: msg });
+    }
+  }
+
+  const totalUpserted = results.reduce((s, r) => s + r.upserted, 0);
+  const hasErrors = results.some((r) => r.error);
+
+  return NextResponse.json(
+    { ok: !hasErrors, totalUpserted, results },
+    { status: hasErrors ? 207 : 200 }
+  );
+}

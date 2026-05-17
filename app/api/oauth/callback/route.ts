@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { exchangeAuthorizationCode } from "@/lib/oauth/etsy-oauth-server";
+import { getMe, getUserShop } from "@/lib/etsy/api";
+import { createSupabaseServerClient } from "@/lib/supabase";
 
 const STATE_COOKIE = "ssh_etsy_oauth_state";
 const VERIFIER_COOKIE = "ssh_etsy_oauth_verifier";
@@ -15,12 +17,16 @@ function clearOAuthCookies(jar: Awaited<ReturnType<typeof cookies>>) {
 
 /**
  * Etsy redirects here with ?code=...&state=... after the seller approves scopes.
- * Validates CSRF state, exchanges the code for tokens (server-side only).
- * Tokens are never appended to URLs; persist them in your database in a follow-up step.
+ * 1. Validates CSRF state.
+ * 2. Exchanges the code for access + refresh tokens.
+ * 3. Fetches the shop info from Etsy.
+ * 4. Persists shop + tokens to Supabase.
+ * 5. Redirects to the dashboard.
  */
 export async function GET(request: NextRequest) {
   const origin = request.nextUrl.origin;
-  const base = new URL("/integrations/etsy", origin);
+  const errorBase = new URL("/integrations/etsy", origin);
+  const dashboardUrl = new URL("/dashboard/shops", origin);
 
   const jar = await cookies();
   const expectedState = jar.get(STATE_COOKIE)?.value;
@@ -33,9 +39,9 @@ export async function GET(request: NextRequest) {
 
   if (err) {
     clearOAuthCookies(jar);
-    base.searchParams.set("oauth_error", err);
-    if (errDesc) base.searchParams.set("oauth_error_description", errDesc);
-    return NextResponse.redirect(base, 302);
+    errorBase.searchParams.set("oauth_error", err);
+    if (errDesc) errorBase.searchParams.set("oauth_error_description", errDesc);
+    return NextResponse.redirect(errorBase, 302);
   }
 
   const code = sp.get("code");
@@ -43,45 +49,66 @@ export async function GET(request: NextRequest) {
 
   if (!code || !state || !expectedState || !codeVerifier || !redirectUri) {
     clearOAuthCookies(jar);
-    base.searchParams.set(
-      "oauth_error",
-      "invalid_request",
-    );
-    base.searchParams.set(
+    errorBase.searchParams.set("oauth_error", "invalid_request");
+    errorBase.searchParams.set(
       "oauth_error_description",
-      "Missing authorization code, state, or session cookies. Start the flow again from Connect.",
+      "Missing authorization code, state, or session cookies. Start the flow again."
     );
-    return NextResponse.redirect(base, 302);
+    return NextResponse.redirect(errorBase, 302);
   }
 
   if (state !== expectedState) {
     clearOAuthCookies(jar);
-    base.searchParams.set("oauth_error", "state_mismatch");
-    base.searchParams.set(
+    errorBase.searchParams.set("oauth_error", "state_mismatch");
+    errorBase.searchParams.set(
       "oauth_error_description",
-      "OAuth state did not match — possible CSRF. Start the flow again.",
+      "OAuth state did not match — possible CSRF. Start the flow again."
     );
-    return NextResponse.redirect(base, 302);
+    return NextResponse.redirect(errorBase, 302);
   }
 
-  const exchanged = await exchangeAuthorizationCode(
-    code,
-    codeVerifier,
-    redirectUri,
-  );
-
+  const exchanged = await exchangeAuthorizationCode(code, codeVerifier, redirectUri);
   clearOAuthCookies(jar);
 
-  if (!exchanged.ok) {
-    base.searchParams.set("oauth_error", "token_exchange_failed");
-    base.searchParams.set(
+  if (!exchanged.ok || !exchanged.tokens) {
+    errorBase.searchParams.set("oauth_error", "token_exchange_failed");
+    errorBase.searchParams.set(
       "oauth_error_description",
-      `Etsy returned HTTP ${exchanged.status}.`,
+      `Etsy returned HTTP ${exchanged.status}.`
     );
-    return NextResponse.redirect(base, 302);
+    return NextResponse.redirect(errorBase, 302);
   }
 
-  // Never log or expose raw tokens. Persist encrypted server-side when you add a DB model.
-  base.searchParams.set("oauth_success", "1");
-  return NextResponse.redirect(base, 302);
+  const { access_token, refresh_token } = exchanged.tokens;
+
+  try {
+    // Resolve which shop this token belongs to
+    const user = await getMe(access_token);
+    const shop = await getUserShop(user.user_id, access_token);
+
+    const supabase = createSupabaseServerClient();
+
+    await supabase.from("connected_shops").upsert(
+      {
+        shop_id: shop.shop_id,
+        shop_name: shop.shop_name,
+        shop_title: shop.title ?? shop.shop_name,
+        shop_icon_url: shop.icon_url_fullxfull ?? null,
+        listing_active_count: shop.listing_active_count ?? 0,
+        access_token,
+        refresh_token: refresh_token ?? null,
+        is_active: true,
+        connected_at: new Date().toISOString(),
+      },
+      { onConflict: "shop_id" }
+    );
+  } catch (e) {
+    console.error("[oauth/callback] failed to persist shop:", e);
+    // Still redirect to dashboard — don't block the user; they can retry sync
+    dashboardUrl.searchParams.set("connect_warning", "shop_save_failed");
+    return NextResponse.redirect(dashboardUrl, 302);
+  }
+
+  dashboardUrl.searchParams.set("connected", "1");
+  return NextResponse.redirect(dashboardUrl, 302);
 }
