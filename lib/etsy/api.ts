@@ -10,6 +10,7 @@
  */
 
 import type {
+  EtsyListingWithImages,
   EtsyReceiptsResponse,
   EtsyShop,
   EtsyTokenResponse,
@@ -124,6 +125,52 @@ export async function getOpenReceipts(
     `/shops/${shopId}/receipts?${params}`,
     accessToken
   );
+}
+
+/**
+ * Batch-fetch listing images for up to 100 listing IDs in a single request.
+ * Returns a Map of listing_id → primary image URL (url_170x135 preferred).
+ *
+ * Etsy v3 receipt transactions only carry listing_id, not the image URLs —
+ * this separate call is required to display product thumbnails.
+ */
+export async function getListingImageMap(
+  listingIds: number[],
+  accessToken: string
+): Promise<Map<number, string>> {
+  const imageMap = new Map<number, string>();
+  if (listingIds.length === 0) return imageMap;
+
+  // Etsy allows at most 100 IDs per batch request
+  const batches: number[][] = [];
+  for (let i = 0; i < listingIds.length; i += 100) {
+    batches.push(listingIds.slice(i, i + 100));
+  }
+
+  for (const batch of batches) {
+    const params = new URLSearchParams({ includes: "Images" });
+    batch.forEach((id) => params.append("listing_ids", String(id)));
+
+    try {
+      const res = await etsyGet<{ count: number; results: EtsyListingWithImages[] }>(
+        `/listings/batch?${params}`,
+        accessToken
+      );
+      for (const listing of res.results ?? []) {
+        const img = listing.images?.[0];
+        if (img) {
+          imageMap.set(
+            listing.listing_id,
+            img.url_170x135 ?? img.url_75x75 ?? img.url_570xN
+          );
+        }
+      }
+    } catch {
+      // Non-fatal: missing images are handled by the placeholder UI
+    }
+  }
+
+  return imageMap;
 }
 
 /**

@@ -6,14 +6,29 @@ export interface EtsyMoney {
   currency_code: string;
 }
 
-export interface SelectedVariation {
+/**
+ * Buyer-selected variation on a receipt transaction.
+ * Etsy v3 stores these inside product_data.property_values —
+ * there is no top-level selected_variations field in the receipts API.
+ */
+export interface ListingPropertyValue {
   property_id: number;
-  value_id: number | null;
-  formatted_name: string;
-  formatted_value: string;
+  property_name: string;   // e.g. "iPhone Model"
+  scale_id: number | null;
+  scale_name: string | null;
+  value_ids: number[];
+  values: string[];        // e.g. ["iPhone 16"]
 }
 
-export interface TransactionImage {
+export interface ListingInventoryProduct {
+  product_id: number | null;
+  sku: string | null;
+  is_deleted: boolean;
+  /** The buyer-selected variation values for this transaction */
+  property_values: ListingPropertyValue[];
+}
+
+export interface ListingImage {
   listing_image_id: number;
   url_75x75: string;
   url_170x135: string;
@@ -30,12 +45,17 @@ export interface EtsyTransaction {
   max_processing_days: number | null;
   /** Unix timestamp (seconds). The deadline Etsy has calculated for this item. */
   expected_ship_date: number | null;
-  /** Buyer-selected listing variations, e.g. iPhone Model, Style */
-  selected_variations: SelectedVariation[];
-  /** Listing images — first entry is the primary product photo */
-  images: TransactionImage[];
-  /** Direct image URL — returned on ShopReceiptTransaction objects */
-  image_url_75x75: string | null;
+  /**
+   * Buyer-selected variations — accessed via product_data.property_values.
+   * (Etsy v3 receipt transactions do NOT have a top-level selected_variations field.)
+   */
+  product_data: ListingInventoryProduct | null;
+}
+
+/** Response from GET /v3/application/listings/batch?includes=Images */
+export interface EtsyListingWithImages {
+  listing_id: number;
+  images: ListingImage[];
 }
 
 export interface EtsyReceipt {

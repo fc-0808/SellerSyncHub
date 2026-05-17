@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MapPin, MessageSquare, StickyNote, Check } from "lucide-react";
+import { MapPin, MessageSquare, StickyNote, Check, Copy, CheckCheck } from "lucide-react";
 import { getUrgencyInfo, formatDeadlineDate } from "@/lib/etsy/urgency";
 import type { StoredTransaction } from "@/lib/etsy/types";
 
@@ -96,12 +96,36 @@ function ProductImage({ url, title }: { url: string | null; title: string }) {
   );
 }
 
+function buildCopyText(buyerName: string | null, addr: ShipAddress | null): string {
+  const lines: string[] = [];
+  if (buyerName) lines.push(buyerName);
+  if (addr?.first_line) lines.push(addr.first_line);
+  if (addr?.second_line) lines.push(addr.second_line);
+  const cityLine = [addr?.city, addr?.state, addr?.zip].filter(Boolean).join(", ");
+  if (cityLine) lines.push(cityLine);
+  if (addr?.country_iso) lines.push(addr.country_iso);
+  return lines.join("\n");
+}
+
 export default function OrderCard({ order, isLocallyShipped, onMarkShipped, isMarking }: Props) {
+  const [copied, setCopied] = useState(false);
   const isShipped = order.is_shipped || isLocallyShipped;
   const urgency = getUrgencyInfo(order.expected_ship_date, isShipped);
   const countryIso = order.ship_country_iso ?? order.ship_address?.country_iso ?? null;
   const isUK = countryIso === "GB";
   const flag = countryIso ? (COUNTRY_FLAG[countryIso] ?? "") : "";
+
+  async function copyAddress() {
+    const text = buildCopyText(order.buyer_name, order.ship_address);
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      /* clipboard not available */
+    }
+  }
   const accentClass = URGENCY_ACCENT[urgency.level] ?? URGENCY_ACCENT.ok;
 
   const hasBadgeIcon = !isShipped && (urgency.level === "overdue" || urgency.level === "critical" || urgency.level === "warning");
@@ -224,14 +248,28 @@ export default function OrderCard({ order, isLocallyShipped, onMarkShipped, isMa
 
       {/* ── Delivery row ── */}
       <div className="px-5 py-4 flex items-start justify-between gap-6">
-        {/* Buyer + address */}
-        <div className="flex items-start gap-2.5 min-w-0">
-          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.8} />
+        {/* Buyer + address — click to copy */}
+        <button
+          onClick={copyAddress}
+          title="Click to copy address"
+          className="group flex items-start gap-2.5 min-w-0 text-left rounded-lg px-2 py-1.5 -mx-2 -my-1.5 hover:bg-slate-50 transition-colors"
+        >
+          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-slate-400 group-hover:text-indigo-500 transition-colors" strokeWidth={1.8} />
           <div className="min-w-0">
-            <p className="text-sm font-bold text-slate-800">
-              {flag && <span className="mr-1.5">{flag}</span>}
-              {order.buyer_name ?? "—"}
-            </p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-sm font-bold text-slate-800">
+                {flag && <span className="mr-1.5">{flag}</span>}
+                {order.buyer_name ?? "—"}
+              </p>
+              {copied ? (
+                <CheckCheck className="h-3.5 w-3.5 text-emerald-500 shrink-0" strokeWidth={2} />
+              ) : (
+                <Copy className="h-3 w-3 text-slate-300 group-hover:text-slate-400 shrink-0 transition-colors" strokeWidth={2} />
+              )}
+              {copied && (
+                <span className="text-[11px] font-semibold text-emerald-500">Copied!</span>
+              )}
+            </div>
             {order.ship_address && (
               <div className="mt-0.5 space-y-px">
                 {order.ship_address.first_line && (
@@ -255,7 +293,7 @@ export default function OrderCard({ order, isLocallyShipped, onMarkShipped, isMa
               </div>
             )}
           </div>
-        </div>
+        </button>
 
         {/* Ship-by date */}
         {!isShipped && order.expected_ship_date && (

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import {
   getOpenReceipts,
+  getListingImageMap,
   refreshAccessToken,
   computeShipDate,
   EtsyApiError,
@@ -96,6 +97,18 @@ export async function POST(request: NextRequest) {
         (locallyShipped ?? []).map((o) => o.receipt_id)
       );
 
+      // Collect unique listing_ids across all receipts, then batch-fetch
+      // their images in ONE extra API call (Etsy receipt transactions don't
+      // include image URLs — they must be retrieved from the listings endpoint)
+      const listingIds = [
+        ...new Set(
+          allReceipts
+            .flatMap((r) => r.transactions.map((t) => t.listing_id))
+            .filter((id): id is number => id != null)
+        ),
+      ];
+      const imageMap = await getListingImageMap(listingIds, accessToken);
+
       // Build upsert rows
       const rows = allReceipts.map((r) => {
         const shipDate = computeShipDate(r);
@@ -108,22 +121,21 @@ export async function POST(request: NextRequest) {
             100
         );
 
-        // Build compact transaction objects with images + variations
+        // Build compact transaction objects with images + variations.
+        // Images: look up via listing_id from the batch-fetched imageMap.
+        // Variations: Etsy v3 stores these in product_data.property_values —
+        //   there is NO top-level selected_variations field in receipts.
         const transactionsJson = r.transactions.map((t) => ({
           transaction_id: t.transaction_id,
           title: t.title,
           quantity: t.quantity ?? 1,
-          // Etsy receipts expose image_url_75x75 directly on the transaction;
-          // the images[] array is often empty in receipt responses
-          image_url:
-            t.images?.[0]?.url_170x135 ??
-            t.images?.[0]?.url_75x75 ??
-            t.image_url_75x75 ??
-            null,
-          variations: (t.selected_variations ?? []).map((v) => ({
-            name: v.formatted_name,
-            value: v.formatted_value,
-          })),
+          image_url: (t.listing_id ? imageMap.get(t.listing_id) : null) ?? null,
+          variations: (t.product_data?.property_values ?? [])
+            .filter((pv) => pv.values?.length > 0)
+            .map((pv) => ({
+              name: pv.property_name,
+              value: pv.values[0],
+            })),
         }));
 
         return {
