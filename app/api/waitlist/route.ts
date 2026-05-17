@@ -1,7 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase";
+import {
+  APPLICATION_TERMS_VERSION,
+  PRIVACY_POLICY_VERSION,
+} from "@/lib/legal/constants";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+function isTrue(v: unknown): v is true {
+  return v === true;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -15,13 +23,38 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // If Supabase is not configured, fall back gracefully during development
-    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) {
-      console.warn("[waitlist] Supabase env vars not set — logging sign-up locally:", email);
+    if (
+      !isTrue(body?.accept_privacy) ||
+      !isTrue(body?.accept_application_terms)
+    ) {
       return NextResponse.json(
         {
-          message:
-            "You're on the list! We'll be in touch soon.",
+          error:
+            "You must accept the Privacy Policy and Seller Application Terms to join the waitlist.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const consentedAt = new Date().toISOString();
+
+    if (
+      !process.env.SUPABASE_URL ||
+      (!process.env.SUPABASE_SERVICE_ROLE_KEY &&
+        !process.env.SUPABASE_SECRET_KEY)
+    ) {
+      console.warn(
+        "[waitlist] Supabase env vars not set — logging sign-up locally:",
+        email,
+        {
+          privacy_policy_version: PRIVACY_POLICY_VERSION,
+          application_terms_version: APPLICATION_TERMS_VERSION,
+          consented_at: consentedAt,
+        }
+      );
+      return NextResponse.json(
+        {
+          message: "You're on the list! We'll be in touch soon.",
         },
         { status: 200 }
       );
@@ -29,18 +62,40 @@ export async function POST(req: NextRequest) {
 
     const supabase = createSupabaseServerClient();
 
-    const { error } = await supabase.from("waitlist_signups").insert({
+    const row = {
       email,
       source: req.headers.get("referer") ?? "direct",
       user_agent: req.headers.get("user-agent") ?? null,
-    });
+      privacy_policy_version: PRIVACY_POLICY_VERSION,
+      application_terms_version: APPLICATION_TERMS_VERSION,
+      consented_at: consentedAt,
+    };
+
+    const { error } = await supabase.from("waitlist_signups").insert(row);
 
     if (error) {
-      // Unique constraint violation — already on the list
       if (error.code === "23505") {
         return NextResponse.json(
           { message: "You're already on the waitlist — we'll be in touch!" },
           { status: 200 }
+        );
+      }
+
+      if (
+        error.message?.includes("column") ||
+        error.code === "PGRST204" ||
+        error.code === "42703"
+      ) {
+        console.error(
+          "[waitlist] Database schema may be outdated. Run supabase/migrations/002_waitlist_consents.sql:",
+          error
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Server configuration is being updated. Please try again in a few minutes.",
+          },
+          { status: 503 }
         );
       }
 

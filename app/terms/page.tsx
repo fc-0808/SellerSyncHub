@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import EtsyTrademarkNotice from "@/components/compliance/EtsyTrademarkNotice";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -146,9 +147,16 @@ export default function TermsPage() {
               className="text-indigo-600 hover:text-indigo-700 underline underline-offset-2"
             >
               Privacy Policy
+            </Link>{" "}
+            and, when you connect Etsy or use multi-channel order features, our{" "}
+            <Link
+              href="/application-terms"
+              className="text-indigo-600 hover:text-indigo-700 underline underline-offset-2"
+            >
+              Seller Application Terms
             </Link>
-            , which is incorporated herein by reference. We process your data
-            only as described in that policy.
+            , each incorporated herein by reference. We process your data only
+            as described in those policies.
           </p>
 
           <h2>8. Intellectual Property</h2>
@@ -233,12 +241,9 @@ export default function TermsPage() {
           </Link>
         </div>
 
-        {/* Trademark disclaimer */}
-        <p className="mt-6 text-[11px] text-slate-400 leading-relaxed">
-          The term &ldquo;Etsy&rdquo; is a trademark of Etsy, Inc. This
-          application uses the Etsy API but is not endorsed or certified by
-          Etsy, Inc.
-        </p>
+        <div className="mt-6 max-w-xl">
+          <EtsyTrademarkNotice compact className="text-slate-500" />
+        </div>
       </div>
     </div>
   );

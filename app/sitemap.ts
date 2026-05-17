@@ -25,5 +25,29 @@ export default function sitemap(): MetadataRoute.Sitemap {
       changeFrequency: "monthly",
       priority: 0.5,
     },
+    {
+      url: `${siteUrl}/application-terms`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.55,
+    },
+    {
+      url: `${siteUrl}/integrations/etsy`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.55,
+    },
+    {
+      url: `${siteUrl}/changelog`,
+      lastModified: now,
+      changeFrequency: "weekly",
+      priority: 0.3,
+    },
+    {
+      url: `${siteUrl}/roadmap`,
+      lastModified: now,
+      changeFrequency: "monthly",
+      priority: 0.3,
+    },
   ];
 }

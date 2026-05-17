@@ -6,6 +6,9 @@ create table if not exists public.waitlist_signups (
   email       text not null,
   source      text,
   user_agent  text,
+  privacy_policy_version text,
+  application_terms_version text,
+  consented_at timestamptz,
   created_at  timestamptz not null default now(),
 
   constraint waitlist_signups_email_unique unique (email)

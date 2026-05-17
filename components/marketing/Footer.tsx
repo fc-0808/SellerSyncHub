@@ -1,65 +1,72 @@
 import Link from "next/link";
 import { Layers, Mail, GitBranch, X } from "lucide-react";
+import EtsyTrademarkNotice from "@/components/compliance/EtsyTrademarkNotice";
 
 const footerLinks = {
   Product: [
-    { label: "Features", href: "#features" },
-    { label: "Pricing", href: "#pricing" },
-    { label: "Changelog", href: "#" },
-    { label: "Roadmap", href: "#" },
+    { label: "Features",  href: "#features"  },
+    { label: "Pricing",   href: "#pricing"   },
+    { label: "Changelog", href: "/changelog" },
+    { label: "Roadmap",   href: "/roadmap"   },
   ],
   Legal: [
-    { label: "Privacy Policy", href: "/privacy" },
-    { label: "Terms of Service", href: "/terms" },
+    { label: "Privacy Policy",        href: "/privacy"           },
+    { label: "Terms of Service",      href: "/terms"             },
+    { label: "Seller App Terms",      href: "/application-terms" },
+    { label: "Etsy Integration",      href: "/integrations/etsy" },
   ],
   Support: [
-    { label: "hi@sellersynchub.com", href: "mailto:hi@sellersynchub.com" },
-    { label: "Documentation", href: "#" },
-    { label: "Status", href: "#" },
+    { label: "hi@sellersynchub.com",  href: "mailto:hi@sellersynchub.com" },
+    { label: "Documentation",         href: "/integrations/etsy"          },
+    { label: "Status",                href: "#"                           },
   ],
 };
 
 const socialLinks = [
-  { icon: X, label: "X (Twitter)", href: "#" },
-  { icon: GitBranch, label: "GitHub", href: "#" },
-  { icon: Mail, label: "Email", href: "mailto:hi@sellersynchub.com" },
+  { icon: X,          label: "X (Twitter)", href: "#"                          },
+  { icon: GitBranch,  label: "GitHub",      href: "#"                          },
+  { icon: Mail,       label: "Email",       href: "mailto:hi@sellersynchub.com" },
 ];
 
 export default function Footer() {
   const year = new Date().getFullYear();
 
   return (
-    <footer className="bg-slate-950 text-slate-400">
-      {/* Main footer content */}
-      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-16 pb-10">
-        <div className="grid grid-cols-2 gap-8 lg:grid-cols-5">
+    <footer className="bg-slate-950 border-t border-white/8">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-14 pb-10">
+
+        {/* ── Main columns ──────────────────────────────────────────── */}
+        <div className="grid grid-cols-2 gap-x-8 gap-y-12 lg:grid-cols-5">
+
           {/* Brand column */}
-          <div className="col-span-2 lg:col-span-2">
+          <div className="col-span-2 lg:col-span-2 lg:pr-8">
             <Link
               href="/"
-              className="inline-flex items-center gap-2.5 group mb-4"
+              className="inline-flex items-center gap-2.5 group mb-5"
               aria-label="SellerSyncHub home"
             >
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 group-hover:bg-indigo-500 transition-colors">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 ring-1 ring-indigo-500/50 group-hover:bg-indigo-500 transition-colors">
                 <Layers className="h-4 w-4 text-white" strokeWidth={2.5} />
               </div>
-              <span className="text-[15px] font-semibold text-white">
+              <span className="text-[15px] font-semibold text-white tracking-tight">
                 SellerSyncHub
               </span>
             </Link>
-            <p className="text-sm leading-relaxed max-w-xs text-slate-500">
+
+            <p className="text-sm leading-relaxed text-slate-500 max-w-[18rem]">
               The centralized order management platform built for high-volume
               multi-shop e-commerce operators.
             </p>
-            <div className="mt-5 flex items-center gap-3">
+
+            <div className="mt-6 flex items-center gap-1">
               {socialLinks.map(({ icon: Icon, label, href }) => (
                 <a
                   key={label}
                   href={href}
                   aria-label={label}
-                  className="flex h-8 w-8 items-center justify-center rounded-md text-slate-500 hover:text-white hover:bg-white/10 transition-colors"
+                  className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-600 hover:text-white hover:bg-white/8 transition-all duration-150"
                 >
-                  <Icon className="h-4 w-4" />
+                  <Icon className="h-3.5 w-3.5" />
                 </a>
               ))}
             </div>
@@ -68,7 +75,7 @@ export default function Footer() {
           {/* Link columns */}
           {Object.entries(footerLinks).map(([category, links]) => (
             <div key={category}>
-              <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-300 mb-4">
+              <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400 mb-4">
                 {category}
               </h3>
               <ul className="space-y-3">
@@ -77,14 +84,14 @@ export default function Footer() {
                     {href.startsWith("/") ? (
                       <Link
                         href={href}
-                        className="text-sm text-slate-500 hover:text-slate-200 transition-colors"
+                        className="text-sm text-slate-600 hover:text-slate-300 transition-colors duration-150"
                       >
                         {label}
                       </Link>
                     ) : (
                       <a
                         href={href}
-                        className="text-sm text-slate-500 hover:text-slate-200 transition-colors"
+                        className="text-sm text-slate-600 hover:text-slate-300 transition-colors duration-150"
                       >
                         {label}
                       </a>
@@ -96,41 +103,41 @@ export default function Footer() {
           ))}
         </div>
 
-        {/* Divider */}
-        <div className="mt-12 border-t border-white/10 pt-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <p className="text-xs text-slate-600">
+        {/* ── Bottom bar ────────────────────────────────────────────── */}
+        <div className="mt-12 pt-7 border-t border-white/8">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-xs text-slate-700">
               &copy; {year} SellerSyncHub. All rights reserved.
             </p>
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              <Link
-                href="/privacy"
-                className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
-              >
-                Privacy Policy
-              </Link>
-              <Link
-                href="/terms"
-                className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
-              >
-                Terms of Service
-              </Link>
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+              {[
+                { label: "Privacy",     href: "/privacy"           },
+                { label: "Terms",       href: "/terms"             },
+                { label: "App Terms",   href: "/application-terms" },
+              ].map(({ label, href }) => (
+                <Link
+                  key={label}
+                  href={href}
+                  className="text-xs text-slate-700 hover:text-slate-400 transition-colors"
+                >
+                  {label}
+                </Link>
+              ))}
+              <span className="hidden sm:block text-slate-800 text-xs">·</span>
               <a
                 href="mailto:hi@sellersynchub.com"
-                className="text-xs text-slate-600 hover:text-slate-400 transition-colors"
+                className="text-xs text-slate-700 hover:text-slate-400 transition-colors"
               >
                 Support
               </a>
             </div>
           </div>
 
-          {/* Etsy API trademark disclaimer — required for API approval */}
-          <p className="mt-4 text-[11px] leading-relaxed text-slate-700 max-w-xl">
-            The term &ldquo;Etsy&rdquo; is a trademark of Etsy, Inc. This
-            application uses the Etsy API but is not endorsed or certified by
-            Etsy, Inc.
-          </p>
+          <div className="mt-5 max-w-2xl">
+            <EtsyTrademarkNotice compact className="text-slate-700" />
+          </div>
         </div>
+
       </div>
     </footer>
   );

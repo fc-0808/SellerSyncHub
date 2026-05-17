@@ -15,15 +15,11 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* ── Animations ─────────────────────────────────────────────────── */
+
 @keyframes fade-up {
-  from {
-    opacity: 0;
-    transform: translateY(24px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0);    }
 }
 
 @keyframes fade-in {
@@ -31,22 +27,50 @@ body {
   to   { opacity: 1; }
 }
 
-.animate-fade-up {
-  animation: fade-up 0.6s ease-out both;
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position:  200% center; }
 }
 
-.animate-fade-in {
-  animation: fade-in 0.4s ease-out both;
-}
+.animate-fade-up  { animation: fade-up  0.55s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-fade-in  { animation: fade-in  0.4s  ease-out both; }
+.animate-shimmer  { animation: shimmer  3s    linear infinite; }
 
+.animation-delay-0   { animation-delay:   0ms; }
 .animation-delay-100 { animation-delay: 100ms; }
 .animation-delay-200 { animation-delay: 200ms; }
 .animation-delay-300 { animation-delay: 300ms; }
 .animation-delay-400 { animation-delay: 400ms; }
+.animation-delay-500 { animation-delay: 500ms; }
+.animation-delay-600 { animation-delay: 600ms; }
+
+/* ── Background utilities ────────────────────────────────────────── */
+
+.bg-dot-grid {
+  background-image: radial-gradient(circle, rgb(99 102 241 / 0.09) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.bg-dot-grid-light {
+  background-image: radial-gradient(circle, rgb(100 116 139 / 0.08) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* ── Scrollbar ───────────────────────────────────────────────────── */
+
+::-webkit-scrollbar        { width: 6px; height: 6px; }
+::-webkit-scrollbar-track  { background: transparent; }
+::-webkit-scrollbar-thumb  { background: rgb(100 116 139 / 0.3); border-radius: 9999px; }
+::-webkit-scrollbar-thumb:hover { background: rgb(100 116 139 / 0.5); }
+
+/* ── Selection ───────────────────────────────────────────────────── */
+
+::selection { background: rgb(99 102 241 / 0.25); color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
-  .animate-fade-in {
+  .animate-fade-in,
+  .animate-shimmer {
     animation: none;
     opacity: 1;
     transform: none;

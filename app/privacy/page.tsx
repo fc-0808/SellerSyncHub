@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import EtsyTrademarkNotice from "@/components/compliance/EtsyTrademarkNotice";
 
 export const metadata: Metadata = {
   title: "Privacy Policy",
@@ -89,8 +90,9 @@ export default function PrivacyPage() {
               platform dashboard
             </li>
             <li>
-              To send transactional notifications (e.g., deadline alerts, order
-              updates) that you have configured
+              To send in-app and account-related notifications to you (the
+              seller), such as deadline alerts you configure, consistent with
+              Etsy&apos;s API Terms
             </li>
             <li>
               To send service updates, security notices, and account-related
@@ -127,11 +129,23 @@ export default function PrivacyPage() {
             revokes our access token and stops further data retrieval.
           </p>
 
-          <h2>4. Data Retention</h2>
+          <h2>4. Etsy API content display and caching</h2>
+          <p>
+            When we present Etsy-sourced information to you in the Service, we
+            follow Etsy&apos;s API Terms regarding how stale that information may
+            be relative to what appears on Etsy&apos;s own websites and apps. In
+            particular, Etsy requires that listing content not be shown more than
+            six (6) hours older than the corresponding information on Etsy, and
+            that other Etsy content not be shown more than twenty-four (24) hours
+            older than on Etsy. We design synchronization and caching accordingly
+            so we remain compliant as these requirements evolve.
+          </p>
+
+          <h2>5. Data Retention</h2>
           <p>
             We retain your account data for as long as your account is active
             or as needed to provide the Service. Order and shipping history
-            retrieved via the API is retained according to your plan's data
+            retrieved via the API is retained according to your plan&apos;s data
             history window. You may request deletion of your account and
             associated data at any time by contacting{" "}
             <a
@@ -143,7 +157,7 @@ export default function PrivacyPage() {
             .
           </p>
 
-          <h2>5. Data Security</h2>
+          <h2>6. Data Security</h2>
           <p>
             We implement industry-standard security measures including TLS
             encryption in transit, AES-256 encryption at rest for sensitive
@@ -152,7 +166,7 @@ export default function PrivacyPage() {
             are never logged or exposed in plaintext.
           </p>
 
-          <h2>6. Third-Party Services</h2>
+          <h2>7. Third-Party Services</h2>
           <p>
             We use trusted third-party services to operate the platform
             (e.g., cloud infrastructure, analytics, and email delivery). These
@@ -161,7 +175,7 @@ export default function PrivacyPage() {
             your storefront or order data with third-party advertisers.
           </p>
 
-          <h2>7. Your Rights</h2>
+          <h2>8. Your Rights</h2>
           <p>
             Depending on your jurisdiction, you may have the right to access,
             correct, or delete your personal data; object to or restrict
@@ -176,13 +190,13 @@ export default function PrivacyPage() {
             .
           </p>
 
-          <h2>8. Children&apos;s Privacy</h2>
+          <h2>9. Children&apos;s Privacy</h2>
           <p>
             The Service is not directed to individuals under 18 years of age. We
             do not knowingly collect personal information from children.
           </p>
 
-          <h2>9. Changes to This Policy</h2>
+          <h2>10. Changes to This Policy</h2>
           <p>
             We may update this Privacy Policy from time to time. We will notify
             you of material changes by posting the new policy with an updated
@@ -191,7 +205,7 @@ export default function PrivacyPage() {
             constitutes your acceptance of the revised policy.
           </p>
 
-          <h2>10. Contact Us</h2>
+          <h2>11. Contact Us</h2>
           <p>
             If you have questions about this Privacy Policy, please contact us
             at{" "}
@@ -215,12 +229,10 @@ export default function PrivacyPage() {
           </Link>
         </div>
 
-        {/* Trademark disclaimer */}
-        <p className="mt-6 text-[11px] text-slate-400 leading-relaxed">
-          The term &ldquo;Etsy&rdquo; is a trademark of Etsy, Inc. This
-          application uses the Etsy API but is not endorsed or certified by
-          Etsy, Inc.
-        </p>
+        {/* Trademark — exact wording required by Etsy API Terms of Use §1 */}
+        <div className="mt-6 max-w-xl">
+          <EtsyTrademarkNotice compact className="text-slate-500" />
+        </div>
       </div>
     </div>
   );

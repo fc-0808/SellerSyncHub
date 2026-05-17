@@ -1,7 +1,12 @@
 "use client";
 
 import { useState, useId } from "react";
+import Link from "next/link";
 import { ArrowRight, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
+import {
+  APPLICATION_TERMS_VERSION,
+  PRIVACY_POLICY_VERSION,
+} from "@/lib/legal/constants";
 
 type Status = "idle" | "loading" | "success" | "error";
 
@@ -15,13 +20,24 @@ export default function WaitlistForm({
   variant = "hero",
 }: WaitlistFormProps) {
   const [email, setEmail] = useState("");
+  const [acceptPrivacy, setAcceptPrivacy] = useState(false);
+  const [acceptAppTerms, setAcceptAppTerms] = useState(false);
   const [status, setStatus] = useState<Status>("idle");
   const [message, setMessage] = useState("");
   const emailId = useId();
+  const privacyId = useId();
+  const appTermsId = useId();
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!email.trim()) return;
+    if (!acceptPrivacy || !acceptAppTerms) {
+      setStatus("error");
+      setMessage(
+        "Please confirm you have read and agree to the Privacy Policy and Seller Application Terms."
+      );
+      return;
+    }
 
     setStatus("loading");
     setMessage("");
@@ -30,15 +46,23 @@ export default function WaitlistForm({
       const res = await fetch("/api/waitlist", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email.trim() }),
+        body: JSON.stringify({
+          email: email.trim(),
+          accept_privacy: true,
+          accept_application_terms: true,
+        }),
       });
 
       const data = await res.json();
 
       if (res.ok) {
         setStatus("success");
-        setMessage(data.message ?? "You're on the list! We'll be in touch soon.");
+        setMessage(
+          data.message ?? "You're on the list! We'll be in touch soon."
+        );
         setEmail("");
+        setAcceptPrivacy(false);
+        setAcceptAppTerms(false);
       } else {
         setStatus("error");
         setMessage(data.error ?? "Something went wrong. Please try again.");
@@ -58,7 +82,9 @@ export default function WaitlistForm({
       >
         <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
         <div>
-          <p className="text-sm font-semibold text-emerald-800">You&apos;re on the list!</p>
+          <p className="text-sm font-semibold text-emerald-800">
+            You&apos;re on the list!
+          </p>
           <p className="mt-0.5 text-sm text-emerald-700">{message}</p>
         </div>
       </div>
@@ -66,6 +92,11 @@ export default function WaitlistForm({
   }
 
   const isHero = variant === "hero";
+  const linkClass =
+    "font-medium text-white underline decoration-white/40 underline-offset-2 hover:decoration-white";
+
+  const canSubmit =
+    email.trim().length > 0 && acceptPrivacy && acceptAppTerms;
 
   return (
     <form
@@ -75,9 +106,7 @@ export default function WaitlistForm({
     >
       <div
         className={`flex ${
-          isHero
-            ? "flex-col sm:flex-row gap-3"
-            : "flex-col gap-2"
+          isHero ? "flex-col sm:flex-row gap-3" : "flex-col gap-2"
         }`}
       >
         <label htmlFor={emailId} className="sr-only">
@@ -106,7 +135,7 @@ export default function WaitlistForm({
         />
         <button
           type="submit"
-          disabled={status === "loading" || !email.trim()}
+          disabled={status === "loading" || !canSubmit}
           className={`inline-flex items-center justify-center gap-2 rounded-xl font-semibold text-sm
             bg-white text-indigo-700 shadow-sm
             hover:bg-slate-50 active:scale-[0.98]
@@ -128,6 +157,55 @@ export default function WaitlistForm({
             </>
           )}
         </button>
+      </div>
+
+      <div className="mt-4 space-y-3 text-left text-xs text-white/85 leading-relaxed">
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            id={privacyId}
+            type="checkbox"
+            checked={acceptPrivacy}
+            onChange={(e) => {
+              setAcceptPrivacy(e.target.checked);
+              if (status === "error") setStatus("idle");
+            }}
+            disabled={status === "loading"}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-white/40 bg-white/10 text-indigo-600 focus:ring-white/30"
+          />
+          <span>
+            I have read and agree to the{" "}
+            <Link href="/privacy" className={linkClass} target="_blank" rel="noopener noreferrer">
+              Privacy Policy
+            </Link>{" "}
+            (v{PRIVACY_POLICY_VERSION}).
+          </span>
+        </label>
+        <label className="flex cursor-pointer items-start gap-2.5">
+          <input
+            id={appTermsId}
+            type="checkbox"
+            checked={acceptAppTerms}
+            onChange={(e) => {
+              setAcceptAppTerms(e.target.checked);
+              if (status === "error") setStatus("idle");
+            }}
+            disabled={status === "loading"}
+            className="mt-0.5 h-3.5 w-3.5 shrink-0 rounded border-white/40 bg-white/10 text-indigo-600 focus:ring-white/30"
+          />
+          <span>
+            I have read and agree to the{" "}
+            <Link
+              href="/application-terms"
+              className={linkClass}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Seller Application Terms
+            </Link>{" "}
+            (v{APPLICATION_TERMS_VERSION}), including the Etsy API warranty
+            disclaimer.
+          </span>
+        </label>
       </div>
 
       {status === "error" && (
