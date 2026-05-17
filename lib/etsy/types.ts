@@ -120,6 +120,7 @@ export type UrgencyLevel = "overdue" | "critical" | "warning" | "ok" | "shipped"
 /** A single product line stored in transactions_json */
 export interface StoredTransaction {
   transaction_id: number;
+  listing_id: number | null;
   title: string;
   quantity: number;
   image_url: string | null;

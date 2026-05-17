@@ -97,14 +97,29 @@ export async function POST(request: NextRequest) {
         (locallyShipped ?? []).map((o) => o.receipt_id)
       );
 
-      // Collect unique listing_ids across all receipts, then batch-fetch
-      // their images in ONE extra API call (Etsy receipt transactions don't
-      // include image URLs — they must be retrieved from the listings endpoint)
+      // ── Diagnostics: log what Etsy actually returns on the first transaction ──
+      const firstTx = allReceipts[0]?.transactions[0];
+      if (firstTx) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const raw = firstTx as any;
+        console.log("[sync] first transaction keys:", Object.keys(raw).sort().join(", "));
+        console.log("[sync] listing_id:", raw.listing_id);
+        console.log("[sync] product_data:", JSON.stringify(raw.product_data)?.slice(0, 300));
+        console.log("[sync] selected_variations:", JSON.stringify(raw.selected_variations)?.slice(0, 300));
+        console.log("[sync] variations:", JSON.stringify(raw.variations)?.slice(0, 300));
+        console.log("[sync] image_url_75x75:", raw.image_url_75x75);
+        console.log("[sync] images:", JSON.stringify(raw.images)?.slice(0, 200));
+      }
+
+      // Collect unique listing_ids, filtering out null/0 (deleted listings)
       const listingIds = [
         ...new Set(
           allReceipts
-            .flatMap((r) => r.transactions.map((t) => t.listing_id))
-            .filter((id): id is number => id != null)
+            .flatMap((r) => r.transactions.map((t) => {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              return (t as any).listing_id as number | null | undefined;
+            }))
+            .filter((id): id is number => id != null && id !== 0)
         ),
       ];
       const imageMap = await getListingImageMap(listingIds, accessToken);
@@ -121,22 +136,45 @@ export async function POST(request: NextRequest) {
             100
         );
 
-        // Build compact transaction objects with images + variations.
-        // Images: look up via listing_id from the batch-fetched imageMap.
-        // Variations: Etsy v3 stores these in product_data.property_values —
-        //   there is NO top-level selected_variations field in receipts.
-        const transactionsJson = r.transactions.map((t) => ({
-          transaction_id: t.transaction_id,
-          title: t.title,
-          quantity: t.quantity ?? 1,
-          image_url: (t.listing_id ? imageMap.get(t.listing_id) : null) ?? null,
-          variations: (t.product_data?.property_values ?? [])
-            .filter((pv) => pv.values?.length > 0)
-            .map((pv) => ({
-              name: pv.property_name,
-              value: pv.values[0],
-            })),
-        }));
+        const transactionsJson = r.transactions.map((t) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const raw = t as any;
+          const listingId: number | null = raw.listing_id ?? null;
+
+          // ── Image: look up from per-listing fetch ──────────────────────────
+          const image_url = (listingId ? imageMap.get(listingId) : null) ?? null;
+
+          // ── Variations: try every known field path across Etsy API versions ─
+          // v3 new: product_data.property_values[].{ property_name, values[] }
+          // v3 old: selected_variations[].{ formatted_name, formatted_value }
+          // v2 compat: variations[].{ formatted_name, formatted_value }
+          type RawVariation = { property_name?: string; values?: string[]; formatted_name?: string; formatted_value?: string };
+          let variations: { name: string; value: string }[] = [];
+
+          const propValues: RawVariation[] = raw.product_data?.property_values ?? [];
+          if (propValues.length > 0) {
+            variations = propValues
+              .filter((pv) => pv.values && pv.values.length > 0)
+              .map((pv) => ({ name: pv.property_name ?? "", value: pv.values![0] }))
+              .filter((v) => v.name && v.value);
+          }
+
+          if (variations.length === 0) {
+            const selVars: RawVariation[] = raw.selected_variations ?? raw.variations ?? [];
+            variations = selVars
+              .filter((v) => v.formatted_name && v.formatted_value)
+              .map((v) => ({ name: v.formatted_name!, value: v.formatted_value! }));
+          }
+
+          return {
+            transaction_id: t.transaction_id,
+            listing_id: listingId,
+            title: t.title,
+            quantity: t.quantity ?? 1,
+            image_url,
+            variations,
+          };
+        });
 
         return {
           shop_id: shop.shop_id,

@@ -15,6 +15,7 @@ import type {
   EtsyShop,
   EtsyTokenResponse,
   EtsyUser,
+  ListingImage,
 } from "./types";
 
 const BASE = "https://api.etsy.com/v3/application";
@@ -128,48 +129,51 @@ export async function getOpenReceipts(
 }
 
 /**
- * Batch-fetch listing images for up to 100 listing IDs in a single request.
+ * Fetch images for a list of listing IDs.
  * Returns a Map of listing_id → primary image URL (url_170x135 preferred).
  *
  * Etsy v3 receipt transactions only carry listing_id, not the image URLs —
  * this separate call is required to display product thumbnails.
+ *
+ * We use individual GET /listings/{id}/images calls (parallel) rather than
+ * the batch endpoint because the batch endpoint has serialisation quirks
+ * that make it unreliable across different Etsy API versions.
  */
 export async function getListingImageMap(
   listingIds: number[],
   accessToken: string
 ): Promise<Map<number, string>> {
   const imageMap = new Map<number, string>();
-  if (listingIds.length === 0) return imageMap;
-
-  // Etsy allows at most 100 IDs per batch request
-  const batches: number[][] = [];
-  for (let i = 0; i < listingIds.length; i += 100) {
-    batches.push(listingIds.slice(i, i + 100));
+  if (listingIds.length === 0) {
+    console.log("[sync] getListingImageMap: no listing_ids to fetch");
+    return imageMap;
   }
 
-  for (const batch of batches) {
-    const params = new URLSearchParams({ includes: "Images" });
-    batch.forEach((id) => params.append("listing_ids", String(id)));
+  console.log("[sync] fetching images for listing_ids:", listingIds);
 
-    try {
-      const res = await etsyGet<{ count: number; results: EtsyListingWithImages[] }>(
-        `/listings/batch?${params}`,
-        accessToken
-      );
-      for (const listing of res.results ?? []) {
-        const img = listing.images?.[0];
-        if (img) {
-          imageMap.set(
-            listing.listing_id,
-            img.url_170x135 ?? img.url_75x75 ?? img.url_570xN
-          );
+  await Promise.all(
+    listingIds.map(async (listingId) => {
+      try {
+        const res = await etsyGet<{ count: number; results: ListingImage[] }>(
+          `/listings/${listingId}/images`,
+          accessToken
+        );
+        const images: ListingImage[] = res.results ?? [];
+        const first = images[0];
+        if (first) {
+          const url = first.url_170x135 ?? first.url_75x75 ?? first.url_570xN;
+          imageMap.set(listingId, url);
+          console.log(`[sync] listing ${listingId} image:`, url);
+        } else {
+          console.log(`[sync] listing ${listingId}: no images in response`, JSON.stringify(res).slice(0, 200));
         }
+      } catch (e) {
+        console.error(`[sync] listing image fetch failed for ${listingId}:`, e instanceof Error ? e.message : String(e));
       }
-    } catch {
-      // Non-fatal: missing images are handled by the placeholder UI
-    }
-  }
+    })
+  );
 
+  console.log("[sync] imageMap size:", imageMap.size);
   return imageMap;
 }
 
