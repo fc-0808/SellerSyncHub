@@ -20,7 +20,7 @@ async function getOrdersData() {
     supabase
       .from("etsy_orders")
       .select(
-        "receipt_id, shop_id, buyer_name, item_count, item_titles, total_price_cents, currency_code, expected_ship_date, is_shipped, receipt_state, synced_at, connected_shops!inner(shop_name, shop_icon_url)"
+        "receipt_id, shop_id, buyer_name, item_count, item_titles, expected_ship_date, is_shipped, receipt_state, etsy_created_at, ship_address, ship_country_iso, buyer_message, seller_note, transactions_json, connected_shops!inner(shop_name, shop_icon_url)"
       )
       .order("expected_ship_date", { ascending: true, nullsFirst: false })
       .limit(500),
@@ -44,11 +44,17 @@ async function getOrdersData() {
       buyer_name: o.buyer_name as string | null,
       item_count: o.item_count as number,
       item_titles: (o.item_titles as string[]) ?? [],
-      total_price_cents: o.total_price_cents as number,
-      currency_code: (o.currency_code as string) ?? "USD",
       expected_ship_date: o.expected_ship_date as string | null,
+      etsy_created_at: o.etsy_created_at as string | null,
       is_shipped: o.is_shipped as boolean,
       receipt_state: o.receipt_state as string,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ship_address: (o.ship_address as any) ?? null,
+      ship_country_iso: o.ship_country_iso as string | null,
+      buyer_message: o.buyer_message as string | null,
+      seller_note: o.seller_note as string | null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      transactions: ((o.transactions_json as any[]) ?? []),
     };
   });
 

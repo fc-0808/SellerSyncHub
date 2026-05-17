@@ -108,6 +108,18 @@ export async function POST(request: NextRequest) {
             100
         );
 
+        // Build compact transaction objects with images + variations
+        const transactionsJson = r.transactions.map((t) => ({
+          transaction_id: t.transaction_id,
+          title: t.title,
+          quantity: t.quantity ?? 1,
+          image_url: t.images?.[0]?.url_170x135 ?? null,
+          variations: (t.selected_variations ?? []).map((v) => ({
+            name: v.formatted_name,
+            value: v.formatted_value,
+          })),
+        }));
+
         return {
           shop_id: shop.shop_id,
           receipt_id: r.receipt_id,
@@ -122,6 +134,22 @@ export async function POST(request: NextRequest) {
             r.grandtotal?.currency_code ?? r.total_price?.currency_code ?? "USD",
           item_count: r.transactions.reduce((s, t) => s + (t.quantity ?? 1), 0),
           item_titles: itemTitles,
+          // Shipping address
+          ship_address: {
+            first_line: r.first_line ?? null,
+            second_line: r.second_line ?? null,
+            city: r.city ?? null,
+            state: r.state ?? null,
+            zip: r.zip ?? null,
+            country_iso: r.country_iso ?? null,
+            formatted: r.formatted_address ?? null,
+          },
+          ship_country_iso: r.country_iso ?? null,
+          // Buyer + seller messages
+          buyer_message: r.message_from_buyer ?? null,
+          seller_note: r.message_from_seller ?? null,
+          // Full transaction detail (images, variations)
+          transactions_json: transactionsJson,
           expected_ship_date: shipDate?.toISOString() ?? null,
           etsy_created_at: new Date(
             (r.created_timestamp ?? r.create_timestamp) * 1000
