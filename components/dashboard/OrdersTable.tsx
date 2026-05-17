@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import { ChevronDown, Package, Store, Clock } from "lucide-react";
+import { useState, useMemo, useTransition } from "react";
+import { ChevronDown, Package, Store, Clock, Check } from "lucide-react";
 import { getUrgencyInfo, formatPrice, formatDeadlineDate } from "@/lib/etsy/urgency";
+import { useRouter } from "next/navigation";
 
 interface OrderRow {
   receipt_id: number;
@@ -33,24 +34,63 @@ const URGENCY_SORT: Record<string, number> = {
 };
 
 export default function OrdersTable({ orders, shops }: Props) {
+  const router = useRouter();
   const [shopFilter, setShopFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<string>("open");
+  // receipt_ids that have been optimistically marked shipped in this session
+  const [localShipped, setLocalShipped] = useState<Set<number>>(new Set());
+  const [pending, startTransition] = useTransition();
+  void pending;
+
+  async function markShipped(receiptId: number) {
+    // Optimistically hide the row immediately
+    setLocalShipped((prev) => new Set([...prev, receiptId]));
+
+    try {
+      const res = await fetch(`/api/orders/${receiptId}`, { method: "PATCH" });
+      if (!res.ok) {
+        // Rollback on failure
+        setLocalShipped((prev) => {
+          const next = new Set(prev);
+          next.delete(receiptId);
+          return next;
+        });
+      } else {
+        // Refresh server data in background so stats update
+        startTransition(() => router.refresh());
+      }
+    } catch {
+      setLocalShipped((prev) => {
+        const next = new Set(prev);
+        next.delete(receiptId);
+        return next;
+      });
+    }
+  }
 
   const filtered = useMemo(() => {
     return orders
+      .filter((o) => !localShipped.has(o.receipt_id) || o.is_shipped)
       .filter((o) => shopFilter === "all" || o.shop_id === Number(shopFilter))
       .filter((o) => {
-        if (statusFilter === "open") return !o.is_shipped;
-        if (statusFilter === "shipped") return o.is_shipped;
+        const shipped = o.is_shipped || localShipped.has(o.receipt_id);
+        if (statusFilter === "open") return !shipped;
+        if (statusFilter === "shipped") return shipped;
         return true;
       })
-      .map((o) => ({ ...o, urgency: getUrgencyInfo(o.expected_ship_date, o.is_shipped) }))
+      .map((o) => ({
+        ...o,
+        urgency: getUrgencyInfo(
+          o.expected_ship_date,
+          o.is_shipped || localShipped.has(o.receipt_id)
+        ),
+      }))
       .sort(
         (a, b) =>
           (URGENCY_SORT[a.urgency.level] ?? 5) -
           (URGENCY_SORT[b.urgency.level] ?? 5)
       );
-  }, [orders, shopFilter, statusFilter]);
+  }, [orders, shopFilter, statusFilter, localShipped]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -110,69 +150,91 @@ export default function OrdersTable({ orders, shops }: Props) {
                   <th className="px-4 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">
                     Status
                   </th>
+                  <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filtered.map((order) => (
-                  <tr
-                    key={order.receipt_id}
-                    className={`hover:bg-slate-50/80 transition-colors ${order.urgency.rowClass}`}
-                  >
-                    <td className="whitespace-nowrap px-4 py-3.5 font-mono text-xs text-slate-600 font-medium">
-                      #{order.receipt_id}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <div className="flex items-center gap-2">
-                        <ShopAvatar name={order.shop_name} iconUrl={order.shop_icon_url} />
-                        <span className="text-xs font-medium text-slate-700 whitespace-nowrap">
-                          {order.shop_name}
-                        </span>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 max-w-[220px]">
-                      <div className="flex items-start gap-1.5">
-                        <Package className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" strokeWidth={1.8} />
-                        <div>
-                          <p className="text-xs text-slate-700 line-clamp-2 leading-snug">
-                            {order.item_titles.length > 0
-                              ? order.item_titles.slice(0, 2).join(", ")
-                              : "—"}
-                          </p>
-                          {order.item_count > 1 && (
-                            <p className="text-[11px] text-slate-400 mt-0.5">
-                              ×{order.item_count} items
-                            </p>
-                          )}
+                {filtered.map((order) => {
+                  const isMarking = localShipped.has(order.receipt_id) && !order.is_shipped;
+                  return (
+                    <tr
+                      key={order.receipt_id}
+                      className={`group hover:bg-slate-50/80 transition-colors ${order.urgency.rowClass}`}
+                    >
+                      <td className="whitespace-nowrap px-4 py-3.5 font-mono text-xs text-slate-600 font-medium">
+                        #{order.receipt_id}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <div className="flex items-center gap-2">
+                          <ShopAvatar name={order.shop_name} iconUrl={order.shop_icon_url} />
+                          <span className="text-xs font-medium text-slate-700 whitespace-nowrap">
+                            {order.shop_name}
+                          </span>
                         </div>
-                      </div>
-                    </td>
-                    <td className="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
-                      {order.buyer_name ?? "—"}
-                    </td>
-                    <td className="px-4 py-3.5 text-right text-xs font-medium text-slate-700 whitespace-nowrap">
-                      {formatPrice(order.total_price_cents, order.currency_code)}
-                    </td>
-                    <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">
-                      {formatDeadlineDate(order.expected_ship_date)}
-                    </td>
-                    <td className="px-4 py-3.5">
-                      <span
-                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${order.urgency.badgeClass}`}
-                      >
-                        {order.urgency.level === "overdue" && (
-                          <span className="mr-1">⚡</span>
+                      </td>
+                      <td className="px-4 py-3.5 max-w-[220px]">
+                        <div className="flex items-start gap-1.5">
+                          <Package className="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-400" strokeWidth={1.8} />
+                          <div>
+                            <p className="text-xs text-slate-700 line-clamp-2 leading-snug">
+                              {order.item_titles.length > 0
+                                ? order.item_titles.slice(0, 2).join(", ")
+                                : "—"}
+                            </p>
+                            {order.item_count > 1 && (
+                              <p className="text-[11px] text-slate-400 mt-0.5">
+                                ×{order.item_count} items
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3.5 text-xs text-slate-600 whitespace-nowrap">
+                        {order.buyer_name ?? "—"}
+                      </td>
+                      <td className="px-4 py-3.5 text-right text-xs font-medium text-slate-700 whitespace-nowrap">
+                        {formatPrice(order.total_price_cents, order.currency_code)}
+                      </td>
+                      <td className="px-4 py-3.5 text-xs text-slate-500 whitespace-nowrap">
+                        {formatDeadlineDate(order.expected_ship_date)}
+                      </td>
+                      <td className="px-4 py-3.5">
+                        <span
+                          className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] ${order.urgency.badgeClass}`}
+                        >
+                          {order.urgency.level === "overdue" && (
+                            <span className="mr-1">⚡</span>
+                          )}
+                          {order.urgency.level === "critical" && (
+                            <span className="mr-1">🔴</span>
+                          )}
+                          {order.urgency.level === "warning" && (
+                            <span className="mr-1">⚠️</span>
+                          )}
+                          {order.urgency.label}
+                        </span>
+                      </td>
+                      {/* Mark Shipped action — only for unshipped orders */}
+                      <td className="px-3 py-3.5 text-right">
+                        {!order.is_shipped && !isMarking && (
+                          <button
+                            onClick={() => markShipped(order.receipt_id)}
+                            title="Mark as shipped"
+                            className="invisible group-hover:visible inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 shadow-sm hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700 transition-colors"
+                          >
+                            <Check className="h-3 w-3" strokeWidth={2.5} />
+                            Shipped
+                          </button>
                         )}
-                        {order.urgency.level === "critical" && (
-                          <span className="mr-1">🔴</span>
+                        {isMarking && (
+                          <span className="text-[11px] text-emerald-600 font-medium">
+                            ✓ Done
+                          </span>
                         )}
-                        {order.urgency.level === "warning" && (
-                          <span className="mr-1">⚠️</span>
-                        )}
-                        {order.urgency.label}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
