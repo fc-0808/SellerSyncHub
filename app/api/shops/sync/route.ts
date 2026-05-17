@@ -85,6 +85,17 @@ export async function POST(request: NextRequest) {
         allReceipts = allReceipts.concat(receiptsResponse.results);
       }
 
+      // Fetch receipt_ids already marked shipped locally so we never
+      // overwrite them back to false when Etsy still says unshipped
+      const { data: locallyShipped } = await supabase
+        .from("etsy_orders")
+        .select("receipt_id")
+        .eq("shop_id", shop.shop_id)
+        .eq("is_shipped", true);
+      const protectedIds = new Set(
+        (locallyShipped ?? []).map((o) => o.receipt_id)
+      );
+
       // Build upsert rows
       const rows = allReceipts.map((r) => {
         const shipDate = computeShipDate(r);
@@ -102,7 +113,8 @@ export async function POST(request: NextRequest) {
           receipt_id: r.receipt_id,
           // Etsy can return null receipt_state for some in-progress orders
           receipt_state: r.receipt_state ?? "open",
-          is_shipped: r.is_shipped,
+          // Never un-ship an order we already marked shipped locally
+          is_shipped: r.is_shipped || protectedIds.has(r.receipt_id),
           is_paid: r.is_paid,
           buyer_name: r.name ?? null,
           total_price_cents: totalCents,

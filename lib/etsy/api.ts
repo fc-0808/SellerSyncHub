@@ -95,16 +95,26 @@ export async function getShop(shopId: number, accessToken: string): Promise<Etsy
 /**
  * Get open (paid, not yet shipped) receipts for a shop.
  * Etsy max limit is 100 per page.
+ *
+ * We pass min_created = 60 days ago so we only pull recent orders.
+ * Orders older than that which Etsy still considers "unshipped" are
+ * almost certainly orders the seller shipped without updating Etsy —
+ * they shouldn't show up as urgent in the dashboard.
  */
 export async function getOpenReceipts(
   shopId: number,
   accessToken: string,
   limit = 100,
-  offset = 0
+  offset = 0,
+  windowDays = 60
 ): Promise<EtsyReceiptsResponse> {
+  const minCreated = Math.floor(
+    (Date.now() - windowDays * 24 * 60 * 60 * 1000) / 1000
+  );
   const params = new URLSearchParams({
     was_paid: "true",
     was_shipped: "false",
+    min_created: String(minCreated),
     limit: String(Math.min(limit, 100)),
     offset: String(offset),
     sort_on: "created",
