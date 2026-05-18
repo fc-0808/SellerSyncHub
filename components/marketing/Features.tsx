@@ -1,38 +1,38 @@
 import {
-  GitMerge,
+  Store,
   LayoutDashboard,
-  ShieldAlert,
+  Gauge,
+  ShieldCheck,
   Zap,
-  Bell,
   BarChart3,
   ArrowRight,
 } from "lucide-react";
 
 const primaryFeatures = [
   {
-    icon: GitMerge,
+    icon: Store,
     number: "01",
-    title: "Multi-Shop Sync",
+    title: "Multi-Storefront Integration",
     description:
-      "Unified, secure OAuth 2.0 authentication across all your storefronts. Connect unlimited shops in minutes — no manual exports, no CSV headaches.",
+      "Securely authenticate and connect up to 20 unique Etsy storefronts using industry-standard OAuth 2.0. Manage your entire portfolio without constantly logging in and out.",
     accentColor: "before:bg-indigo-500",
     iconRing: "ring-indigo-100 bg-indigo-50 text-indigo-600",
   },
   {
     icon: LayoutDashboard,
     number: "02",
-    title: "Command Center",
+    title: "Unified Fulfillment Dashboard",
     description:
-      "Aggregated orders view with advanced sorting and filtering by fulfillment urgency. Every open order, ranked by what needs your attention first.",
+      "Aggregate your unshipped orders into a single, lightning-fast operational cache. Filter by shipping deadlines, track fulfillment workflows, and automatically clear out ghost orders.",
     accentColor: "before:bg-violet-500",
     iconRing: "ring-violet-100 bg-violet-50 text-violet-600",
   },
   {
-    icon: ShieldAlert,
+    icon: Gauge,
     number: "03",
-    title: "Deadline Guard",
+    title: "High-Performance Syncing",
     description:
-      "Real-time tracking of shipping timelines to protect your seller standing. Get alerted before a deadline slips — not after a penalty arrives.",
+      "Built for scale and reliability. SellerSyncHub utilizes intelligent queueing, image caching, and rate-limit protection to ensure continuous, reliable order syncing across all your shops.",
     accentColor: "before:bg-emerald-500",
     iconRing: "ring-emerald-100 bg-emerald-50 text-emerald-600",
   },
@@ -40,19 +40,22 @@ const primaryFeatures = [
 
 const secondaryFeatures = [
   {
-    icon: Zap,
-    title: "Instant Refresh",
-    description: "Orders sync in near real-time so you always act on current data.",
+    icon: ShieldCheck,
+    title: "Rate-Limit Protection",
+    description:
+      "Sequential request queuing with exponential back-off keeps every sync safely within Etsy's API quota.",
   },
   {
-    icon: Bell,
-    title: "Smart Alerts",
-    description: "Configurable notifications for late shipments and at-risk orders.",
+    icon: Zap,
+    title: "Deadline Urgency Engine",
+    description:
+      "Every order is scored by shipping urgency the moment it syncs — overdue, at-risk, or on track.",
   },
   {
     icon: BarChart3,
-    title: "Performance Analytics",
-    description: "Track fulfillment rates, shipping speed, and shop-level KPIs.",
+    title: "Fulfillment Analytics",
+    description:
+      "Track dispatch rates, on-time shipping performance, and shop-level KPIs across your entire portfolio.",
   },
 ];
 
@@ -70,11 +73,11 @@ export default function Features() {
             Platform capabilities
           </p>
           <h2 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
-            Everything you need to run operations at scale
+            Professional-grade infrastructure for serious Etsy operations
           </h2>
           <p className="mt-4 text-lg text-slate-500 leading-relaxed">
-            Built for high-volume merchants who can&apos;t afford to miss a
-            deadline or lose visibility across their portfolio.
+            Built for high-volume merchants who manage multiple storefronts and
+            can&apos;t afford to miss a deadline or lose visibility across their portfolio.
           </p>
         </div>
 

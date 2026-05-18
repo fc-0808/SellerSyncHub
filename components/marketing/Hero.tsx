@@ -47,17 +47,17 @@ export default function Hero() {
 
           {/* H1 */}
           <h1 className="animate-fade-up animation-delay-100 text-4xl font-bold tracking-tight text-white sm:text-5xl lg:text-[3.5rem] leading-[1.1]">
-            The Ultimate Order Management Hub for{" "}
+            The Professional Order Management System for{" "}
             <span className="bg-gradient-to-r from-indigo-400 via-violet-300 to-indigo-400 bg-clip-text text-transparent [background-size:200%_auto] animate-shimmer">
-              Multi-Shop Sellers
+              High-Volume Etsy Sellers
             </span>
           </h1>
 
           {/* Subtitle */}
           <p className="animate-fade-up animation-delay-200 mt-6 text-lg text-slate-400 leading-relaxed max-w-2xl mx-auto">
-            Sync orders, track strict shipping deadlines, and manage fulfillment across{" "}
-            <strong className="font-semibold text-slate-200">20+ storefronts</strong>{" "}
-            — all from a single, powerful command center.
+            Streamline your fulfillment operations. Securely connect multiple storefronts,
+            aggregate unshipped orders, and monitor your shipping deadlines from a{" "}
+            <strong className="font-semibold text-slate-200">single, high-performance dashboard</strong>.
           </p>
 
           {/* Waitlist form */}

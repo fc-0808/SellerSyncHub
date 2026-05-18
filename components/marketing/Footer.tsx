@@ -9,7 +9,7 @@ const footerLinks = {
     { label: "Changelog", href: "/changelog" },
     { label: "Roadmap",   href: "/roadmap"   },
   ],
-  Legal: [
+  "Legal & Compliance": [
     { label: "Privacy Policy",        href: "/privacy"           },
     { label: "Terms of Service",      href: "/terms"             },
     { label: "Seller App Terms",      href: "/application-terms" },
@@ -54,8 +54,8 @@ export default function Footer() {
             </Link>
 
             <p className="text-sm leading-relaxed text-slate-500 max-w-[18rem]">
-              The centralized order management platform built for high-volume
-              multi-shop e-commerce operators.
+              The professional order management system for high-volume Etsy
+              sellers — built to scale across every storefront you own.
             </p>
 
             <div className="mt-6 flex items-center gap-1">
@@ -133,8 +133,13 @@ export default function Footer() {
             </div>
           </div>
 
-          <div className="mt-5 max-w-2xl">
-            <EtsyTrademarkNotice compact className="text-slate-700" />
+          {/* ── Etsy trademark & compliance notice ──────────────────── */}
+          {/* Required by Etsy API Terms — must appear prominently.     */}
+          <div className="mt-6 rounded-lg border border-white/6 bg-white/3 px-4 py-3.5">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-500 mb-1.5">
+              Trademark &amp; Compliance Notice
+            </p>
+            <EtsyTrademarkNotice className="text-slate-500" />
           </div>
         </div>
 
