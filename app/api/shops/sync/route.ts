@@ -1,3 +1,19 @@
+/**
+ * POST /api/shops/sync
+ *
+ * Syncs open Etsy orders into the etsy_orders cache table for all connected
+ * shops (or a single shop when ?shop_id=xxx is supplied).
+ *
+ * Rate-limit budget (Personal Access tier):
+ *   • 5 QPS  — enforced in lib/etsy/api.ts (sequential calls + 250 ms delay)
+ *   • 5,000 QPD — protected by the listing_images Supabase cache (images are
+ *     fetched from Etsy only on the first sync, then served from the DB)
+ *
+ * Shops are processed sequentially. A rate-limit error that survives all
+ * retries (EtsyApiError 429) aborts the current shop and continues to the
+ * next, so one misbehaving shop never kills the entire batch.
+ */
+
 import { NextRequest, NextResponse } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase";
 import {
@@ -7,57 +23,158 @@ import {
   computeShipDate,
   EtsyApiError,
 } from "@/lib/etsy/api";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-// ── Retention policy constants ────────────────────────────────────────────────
-//
-// FETCH_WINDOW_DAYS: only pull receipts created within this many days from Etsy.
-// Orders older than this are operationally irrelevant — if a seller hasn't
-// dispatched a 30-day-old order, it's been handled outside our system.
-//
-// STALE_GUARD_DAYS: even within the fetch window, skip receipts whose dispatch
-// deadline has already passed by more than this many days. These are "ghost"
-// orders — the seller shipped the package but never updated Etsy. They will
-// appear forever in Etsy's "unshipped" queue; we must not let them pollute our
-// dashboard.
-//
-// SHIPPED_TTL_DAYS: automatically delete shipped orders from our local cache
-// after this many days. Our DB is an operational cache, not a history store —
-// old fulfilled orders belong in Etsy, not here.
-//
-const FETCH_WINDOW_DAYS  = 30;
-const STALE_GUARD_DAYS   = 7;
-const SHIPPED_TTL_DAYS   = 7;
+/* ─────────────────────── operational constants ───────────────── */
+
+/**
+ * Only pull receipts created within this window.
+ * Orders older than 30 days that are still "unshipped" on Etsy are almost
+ * certainly ones the seller dispatched without updating Etsy — they should
+ * never appear on the dashboard.
+ */
+const FETCH_WINDOW_DAYS = 30;
+
+/**
+ * Skip any receipt whose dispatch deadline has already passed by more than
+ * this many days (ghost-order stale guard).
+ * Even within the 30-day fetch window, an order whose ship date was 8+ days
+ * ago and is still marked unshipped on Etsy is a "ghost" — the seller shipped
+ * the parcel but forgot to complete the order on Etsy.
+ */
+const STALE_GUARD_DAYS = 7;
+
+/**
+ * Delete shipped orders from our local cache after this many days.
+ * Our etsy_orders table is an operational cache, not a history store.
+ * Old fulfilled orders remain permanently on Etsy for the seller's records.
+ */
+const SHIPPED_TTL_DAYS = 7;
+
+/**
+ * How long a listing image URL is considered fresh in the Supabase cache.
+ * After this, we re-fetch from Etsy so images stay current if a seller
+ * updates their listing photos.
+ */
+const IMAGE_CACHE_TTL_DAYS = 30;
+
+/* ─────────────────────────── types ──────────────────────────── */
 
 interface SyncResult {
   shop_id: number;
   shop_name: string;
   upserted: number;
   pruned: number;
-  skipped: number;
+  skipped_ghosts: number;
+  images_from_cache: number;
+  images_from_etsy: number;
   error?: string;
 }
 
+/* ──────────────────── image cache helper ────────────────────── */
+
 /**
- * POST /api/shops/sync
- * Fetches open receipts from Etsy for all (or one) connected shop(s)
- * and upserts them into the etsy_orders table.
+ * Returns a Map<listing_id, image_url> for the given listing IDs.
  *
- * Optional query param: ?shop_id=xxx  — sync only that shop
+ * Strategy (protects the 5,000 QPD budget):
+ *   1. Query the `listing_images` Supabase table for cached entries that are
+ *      still within IMAGE_CACHE_TTL_DAYS.
+ *   2. Only call the Etsy API for the IDs that are missing or stale.
+ *   3. Upsert new results back into the cache so future syncs are free.
+ *
+ * Etsy calls are delegated to getListingImageMap (lib/etsy/api.ts) which
+ * enforces sequential fetching at 4 req/s.
  */
+async function getCachedImageMap(
+  listingIds: number[],
+  accessToken: string,
+  supabase: SupabaseClient
+): Promise<{ map: Map<number, string>; cacheHits: number; cacheMisses: number }> {
+  const imageMap = new Map<number, string>();
+
+  if (listingIds.length === 0) {
+    return { map: imageMap, cacheHits: 0, cacheMisses: 0 };
+  }
+
+  // ── 1. Check Supabase cache ──────────────────────────────────────────────
+  const cacheCutoff = new Date(
+    Date.now() - IMAGE_CACHE_TTL_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const { data: cachedRows } = await supabase
+    .from("listing_images")
+    .select("listing_id, image_url")
+    .in("listing_id", listingIds)
+    .gte("updated_at", cacheCutoff);
+
+  const cachedIds = new Set<number>();
+  for (const row of cachedRows ?? []) {
+    imageMap.set(row.listing_id as number, row.image_url as string);
+    cachedIds.add(row.listing_id as number);
+  }
+
+  const uncachedIds = listingIds.filter((id) => !cachedIds.has(id));
+  const cacheHits = cachedIds.size;
+
+  // ── 2. Fetch misses from Etsy ────────────────────────────────────────────
+  if (uncachedIds.length === 0) {
+    console.log(
+      `[sync] image cache: all ${cacheHits} image(s) served from cache — 0 Etsy calls`
+    );
+    return { map: imageMap, cacheHits, cacheMisses: 0 };
+  }
+
+  console.log(
+    `[sync] image cache: ${cacheHits} hit(s), ${uncachedIds.length} miss(es) → fetching from Etsy`
+  );
+
+  const fetchedMap = await getListingImageMap(uncachedIds, accessToken);
+
+  // ── 3. Write new entries back to cache ──────────────────────────────────
+  if (fetchedMap.size > 0) {
+    const now = new Date().toISOString();
+    const newRows = Array.from(fetchedMap.entries()).map(([listing_id, image_url]) => ({
+      listing_id,
+      image_url,
+      updated_at: now,
+    }));
+
+    const { error: cacheErr } = await supabase
+      .from("listing_images")
+      .upsert(newRows, { onConflict: "listing_id" });
+
+    if (cacheErr) {
+      // Non-fatal — images will still display, just won't be cached
+      console.warn("[sync] image cache write failed:", cacheErr.message);
+    } else {
+      console.log(`[sync] image cache: stored ${newRows.length} new entry(s)`);
+    }
+
+    for (const [id, url] of fetchedMap) {
+      imageMap.set(id, url);
+    }
+  }
+
+  return { map: imageMap, cacheHits, cacheMisses: fetchedMap.size };
+}
+
+/* ─────────────────────────── handler ───────────────────────── */
+
 export async function POST(request: NextRequest) {
   const shopIdParam = request.nextUrl.searchParams.get("shop_id");
   const supabase = createSupabaseServerClient();
 
-  let query = supabase
+  // ── Load target shops ────────────────────────────────────────────────────
+  let shopsQuery = supabase
     .from("connected_shops")
     .select("shop_id, shop_name, access_token, refresh_token")
     .eq("is_active", true);
 
   if (shopIdParam) {
-    query = query.eq("shop_id", Number(shopIdParam));
+    shopsQuery = shopsQuery.eq("shop_id", Number(shopIdParam));
   }
 
-  const { data: shops, error: shopsErr } = await query;
+  const { data: shops, error: shopsErr } = await shopsQuery;
   if (shopsErr) {
     return NextResponse.json({ error: "Failed to load shops" }, { status: 500 });
   }
@@ -67,11 +184,16 @@ export async function POST(request: NextRequest) {
 
   const results: SyncResult[] = [];
 
+  // ── Process each shop sequentially ───────────────────────────────────────
+  // Sequential (not parallel) for two reasons:
+  //   1. Each shop issues multiple Etsy API calls; concurrent shops would
+  //      easily exceed the 5 QPS limit.
+  //   2. A 429 on one shop should not abort another shop's sync.
   for (const shop of shops) {
     let accessToken: string = shop.access_token;
 
     try {
-      // ── 1. Fetch open receipts from Etsy ─────────────────────────────────
+      // ── Step 1: Fetch open receipts ───────────────────────────────────────
       let receiptsResponse = await getOpenReceipts(
         shop.shop_id,
         accessToken,
@@ -79,7 +201,9 @@ export async function POST(request: NextRequest) {
         0,
         FETCH_WINDOW_DAYS
       ).catch(async (e: unknown) => {
+        // Auto-refresh on 401 then retry once
         if (e instanceof EtsyApiError && e.isUnauthorized && shop.refresh_token) {
+          console.log(`[sync] shop ${shop.shop_id}: access token expired — refreshing`);
           const fresh = await refreshAccessToken(shop.refresh_token);
           accessToken = fresh.access_token;
           await supabase
@@ -94,7 +218,7 @@ export async function POST(request: NextRequest) {
         throw e;
       });
 
-      // Paginate if needed
+      // Paginate
       let allReceipts = receiptsResponse.results;
       while (
         receiptsResponse.count > allReceipts.length &&
@@ -110,58 +234,56 @@ export async function POST(request: NextRequest) {
         allReceipts = allReceipts.concat(receiptsResponse.results);
       }
 
-      // ── 2. Stale-guard: drop ghost orders ────────────────────────────────
-      // A ghost order is one whose dispatch deadline has already passed by more
-      // than STALE_GUARD_DAYS. The seller shipped the package without updating
-      // Etsy; these orders sit in Etsy's "unshipped" queue indefinitely.
-      // Filtering them here prevents them from ever reaching our DB.
+      // ── Step 2: Stale-guard — drop ghost orders ───────────────────────────
+      // Ghost orders are ones where the dispatch deadline passed more than
+      // STALE_GUARD_DAYS ago and Etsy still lists them as unshipped. This
+      // happens when a seller ships physically but never updates Etsy.
       const staleThresholdMs = Date.now() - STALE_GUARD_DAYS * 24 * 60 * 60 * 1000;
 
       const freshReceipts = allReceipts.filter((r) => {
         const shipDate = computeShipDate(r);
-        if (!shipDate) return true; // No deadline — keep it
-        const isStale = shipDate.getTime() < staleThresholdMs;
-        if (isStale) {
+        if (!shipDate) return true;
+        const isGhost = shipDate.getTime() < staleThresholdMs;
+        if (isGhost) {
           console.log(
-            `[sync] skipping ghost order #${r.receipt_id} (deadline ${shipDate.toISOString()} is >` +
-            ` ${STALE_GUARD_DAYS}d past)`
+            `[sync] ghost-guard: skipping #${r.receipt_id} ` +
+            `(deadline ${shipDate.toISOString().slice(0, 10)}, ` +
+            `>${STALE_GUARD_DAYS}d past)`
           );
         }
-        return !isStale;
+        return !isGhost;
       });
-      const skipped = allReceipts.length - freshReceipts.length;
+      const skippedGhosts = allReceipts.length - freshReceipts.length;
 
-      // ── 3. Diagnostics on first transaction ──────────────────────────────
-      const firstTx = freshReceipts[0]?.transactions[0];
-      if (firstTx) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const raw = firstTx as any;
-        console.log("[sync] first transaction keys:", Object.keys(raw).sort().join(", "));
-        console.log("[sync] product_data:", JSON.stringify(raw.product_data)?.slice(0, 300));
-      }
-
-      // ── 4. Batch-fetch images ─────────────────────────────────────────────
+      // ── Step 3: Images — cache-first, Etsy-on-miss ───────────────────────
       const listingIds = [
         ...new Set(
           freshReceipts
-            .flatMap((r) => r.transactions.map((t) => {
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              return (t as any).listing_id as number | null | undefined;
-            }))
+            .flatMap((r) =>
+              r.transactions.map((t) => {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                return (t as any).listing_id as number | null | undefined;
+              })
+            )
             .filter((id): id is number => id != null && id !== 0)
         ),
       ];
-      const imageMap = await getListingImageMap(listingIds, accessToken);
 
-      // ── 5. Build upsert rows ──────────────────────────────────────────────
+      const {
+        map: imageMap,
+        cacheHits,
+        cacheMisses,
+      } = await getCachedImageMap(listingIds, accessToken, supabase);
+
+      // ── Step 4: Build upsert rows ─────────────────────────────────────────
       const rows = freshReceipts.map((r) => {
         const shipDate = computeShipDate(r);
         const itemTitles = [
           ...new Set(r.transactions.map((t) => t.title).filter(Boolean)),
         ];
         const totalCents = Math.round(
-          (r.grandtotal?.amount ?? r.total_price?.amount ?? 0) /
-            (r.grandtotal?.divisor ?? r.total_price?.divisor ?? 100) *
+          ((r.grandtotal?.amount ?? r.total_price?.amount ?? 0) /
+            (r.grandtotal?.divisor ?? r.total_price?.divisor ?? 100)) *
             100
         );
 
@@ -171,10 +293,12 @@ export async function POST(request: NextRequest) {
           const listingId: number | null = raw.listing_id ?? null;
           const image_url = (listingId ? imageMap.get(listingId) : null) ?? null;
 
-          // Try all known Etsy API field paths for variations
+          // Try all known Etsy v3 field paths for buyer-selected variations
           type RawVariation = {
-            property_name?: string; values?: string[];
-            formatted_name?: string; formatted_value?: string;
+            property_name?: string;
+            values?: string[];
+            formatted_name?: string;
+            formatted_value?: string;
           };
           let variations: { name: string; value: string }[] = [];
 
@@ -206,8 +330,8 @@ export async function POST(request: NextRequest) {
           shop_id: shop.shop_id,
           receipt_id: r.receipt_id,
           receipt_state: r.receipt_state ?? "open",
-          // Etsy says unshipped, but our local shipped_at is authoritative
-          // (user completed it via our app — Etsy just hasn't been updated yet)
+          // Use Etsy's shipped status — locally-completed orders are fixed
+          // in Step 5 (shipped_at is authoritative when set by our app)
           is_shipped: r.is_shipped,
           is_paid: r.is_paid,
           buyer_name: r.name ?? null,
@@ -243,20 +367,15 @@ export async function POST(request: NextRequest) {
       if (rows.length > 0) {
         const { error: upsertErr } = await supabase
           .from("etsy_orders")
-          .upsert(rows, {
-            onConflict: "receipt_id",
-            // CRITICAL: never let Etsy overwrite a locally-set shipped_at or
-            // tracking_number — those are set by the user via our Complete Order
-            // flow and represent ground truth even before Etsy is updated.
-            ignoreDuplicates: false,
-          });
+          .upsert(rows, { onConflict: "receipt_id" });
         if (upsertErr) throw upsertErr;
       }
 
-      // ── 6. Preserve local shipped status ─────────────────────────────────
-      // If an order was completed via our app (has shipped_at set) but Etsy
-      // hasn't been updated yet, the upsert above set is_shipped=false.
-      // Restore is_shipped=true for any row that has a shipped_at timestamp.
+      // ── Step 5: Restore local shipped status ──────────────────────────────
+      // The upsert above writes Etsy's is_shipped=false for orders the seller
+      // completed via our app (our app calls Etsy's tracking API, but there
+      // can be a propagation delay). Any row with a shipped_at timestamp was
+      // completed by the seller — mark it shipped regardless of Etsy's value.
       const fetchedIds = freshReceipts.map((r) => r.receipt_id);
       if (fetchedIds.length > 0) {
         await supabase
@@ -267,10 +386,10 @@ export async function POST(request: NextRequest) {
           .not("shipped_at", "is", null);
       }
 
-      // ── 7. Auto-close: orders Etsy no longer lists ───────────────────────
-      // If an order is open in our DB (no shipped_at) but Etsy stopped
-      // returning it in the unshipped queue within our window, the seller
-      // marked it shipped directly on Etsy. Close it locally.
+      // ── Step 6: Auto-close orders Etsy no longer lists ────────────────────
+      // If an order was open in our DB (no shipped_at) but Etsy stopped
+      // returning it in the unshipped queue, the seller marked it shipped
+      // directly on Etsy. Close it locally.
       const fetchedSet = new Set(fetchedIds);
       const windowCutoff = new Date(
         Date.now() - FETCH_WINDOW_DAYS * 24 * 60 * 60 * 1000
@@ -290,7 +409,7 @@ export async function POST(request: NextRequest) {
 
       if (goneFromEtsy.length > 0) {
         console.log(
-          `[sync] auto-closing ${goneFromEtsy.length} order(s) gone from Etsy:`,
+          `[sync] auto-closing ${goneFromEtsy.length} order(s) no longer in Etsy queue:`,
           goneFromEtsy
         );
         await supabase
@@ -299,10 +418,7 @@ export async function POST(request: NextRequest) {
           .in("receipt_id", goneFromEtsy);
       }
 
-      // ── 8. Prune old shipped orders (TTL) ────────────────────────────────
-      // Our DB is a live operational cache. Shipped orders older than
-      // SHIPPED_TTL_DAYS are no longer actionable — delete them entirely.
-      // They remain permanently on Etsy for the seller's records.
+      // ── Step 7: TTL prune — delete old shipped orders ─────────────────────
       const shippedTtlCutoff = new Date(
         Date.now() - SHIPPED_TTL_DAYS * 24 * 60 * 60 * 1000
       ).toISOString();
@@ -320,7 +436,6 @@ export async function POST(request: NextRequest) {
         console.log(`[sync] pruned ${prunedCount} shipped order(s) past TTL`);
       }
 
-      // Update last_synced_at on the shop
       await supabase
         .from("connected_shops")
         .update({ last_synced_at: new Date().toISOString() })
@@ -331,23 +446,36 @@ export async function POST(request: NextRequest) {
         shop_name: shop.shop_name,
         upserted: rows.length,
         pruned: prunedCount,
-        skipped,
+        skipped_ghosts: skippedGhosts,
+        images_from_cache: cacheHits,
+        images_from_etsy: cacheMisses,
       });
     } catch (e) {
+      // ── Graceful shop-level error handling ──────────────────────────────
+      // A 429 that survived all retries means we're out of quota for now.
+      // Skip this shop and continue to the next — do not abort the batch.
+      const isRateLimit = e instanceof EtsyApiError && e.isRateLimited;
       const msg =
         e instanceof Error
           ? e.message
           : typeof e === "object" && e !== null && "message" in e
           ? String((e as { message: unknown }).message)
           : JSON.stringify(e);
-      console.error(`[sync] shop ${shop.shop_id} failed:`, msg);
+
+      console.error(
+        `[sync] shop ${shop.shop_id} (${shop.shop_name}) failed${isRateLimit ? " — RATE LIMITED" : ""}:`,
+        msg
+      );
+
       results.push({
         shop_id: shop.shop_id,
         shop_name: shop.shop_name,
         upserted: 0,
         pruned: 0,
-        skipped: 0,
-        error: msg,
+        skipped_ghosts: 0,
+        images_from_cache: 0,
+        images_from_etsy: 0,
+        error: isRateLimit ? "Rate limit hit — try again later" : msg,
       });
     }
   }

@@ -1,12 +1,16 @@
 /**
  * Etsy Open API v3 client — server-side only.
  *
- * Per the official Etsy quickstart, authenticated API calls require:
- *   Authorization: Bearer {access_token}
- *   x-api-key: {keystring}:{shared_secret}   ← both parts, colon-separated
+ * Rate-limit budget (Personal Access / Unapproved tier):
+ *   - 5 Queries Per Second  (QPS)
+ *   - 5,000 Queries Per Day (QPD)
  *
- * The user_id is embedded as the first segment of the access token
- * (before the first '.'), so no separate /users/me call is needed.
+ * All outbound calls go through etsyGet / etsyPost which enforce:
+ *   1. Automatic retry with exponential back-off on HTTP 429.
+ *   2. A Retry-After header is respected when present.
+ *
+ * getListingImageMap is sequential (not parallel) with a 250 ms inter-call
+ * delay, giving a maximum of 4 req/s — safely under the 5 QPS ceiling.
  */
 
 import type {
@@ -18,8 +22,26 @@ import type {
   ListingImage,
 } from "./types";
 
-const BASE = "https://api.etsy.com/v3/application";
+/* ─────────────────────────── constants ──────────────────────── */
+
+const BASE      = "https://api.etsy.com/v3/application";
 const TOKEN_URL = "https://api.etsy.com/v3/public/oauth/token";
+
+/** Milliseconds to wait between sequential image-fetch calls (4 req/s max). */
+const IMAGE_FETCH_INTERVAL_MS = 250;
+
+/** Maximum number of automatic retries on HTTP 429 before giving up. */
+const MAX_429_RETRIES = 3;
+
+/** Base back-off delay for the first retry (doubles on each subsequent attempt). */
+const BASE_BACKOFF_MS = 1_000;
+
+/* ─────────────────────────── utilities ──────────────────────── */
+
+/** Simple promise-based delay. */
+export function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function getKeystring(): string {
   const k = process.env.ETSY_API_KEYSTRING?.trim();
@@ -38,7 +60,36 @@ function getApiKeyHeader(): string {
   return `${getKeystring()}:${getSharedSecret()}`;
 }
 
-async function etsyGet<T>(path: string, accessToken: string): Promise<T> {
+/* ─────────────────────────── error class ────────────────────── */
+
+export class EtsyApiError extends Error {
+  constructor(
+    public readonly status: number,
+    public readonly body: string
+  ) {
+    super(`Etsy API ${status}: ${body.slice(0, 200)}`);
+    this.name = "EtsyApiError";
+  }
+  get isUnauthorized()  { return this.status === 401; }
+  get isRateLimited()   { return this.status === 429; }
+}
+
+/* ─────────────────────────── base fetch ─────────────────────── */
+
+/**
+ * Authenticated GET with automatic retry on HTTP 429.
+ *
+ * Retry schedule (attempt 0 = first try):
+ *   attempt 1 → wait 1 s  (or Retry-After if header is present)
+ *   attempt 2 → wait 2 s
+ *   attempt 3 → wait 4 s
+ *   attempt 4 → throw EtsyApiError(429)
+ */
+async function etsyGet<T>(
+  path: string,
+  accessToken: string,
+  attempt = 0
+): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -48,6 +99,27 @@ async function etsyGet<T>(path: string, accessToken: string): Promise<T> {
     cache: "no-store",
   });
 
+  if (res.status === 429) {
+    if (attempt >= MAX_429_RETRIES) {
+      const body = await res.text().catch(() => "");
+      throw new EtsyApiError(429, body);
+    }
+
+    // Respect the Retry-After header (seconds) when provided; otherwise
+    // use exponential back-off: 1 s → 2 s → 4 s
+    const retryAfterSec = parseInt(res.headers.get("Retry-After") ?? "0", 10);
+    const backoffMs = retryAfterSec > 0
+      ? retryAfterSec * 1_000
+      : BASE_BACKOFF_MS * Math.pow(2, attempt);
+
+    console.warn(
+      `[etsy-api] 429 on ${path} — waiting ${backoffMs}ms before retry ` +
+      `(attempt ${attempt + 1}/${MAX_429_RETRIES})`
+    );
+    await delay(backoffMs);
+    return etsyGet<T>(path, accessToken, attempt + 1);
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new EtsyApiError(res.status, body);
@@ -56,10 +128,16 @@ async function etsyGet<T>(path: string, accessToken: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/**
+ * Authenticated POST.
+ * A single retry is attempted on 429 (user-triggered actions like creating a
+ * shipment are low-frequency so one retry is sufficient).
+ */
 async function etsyPost<T>(
   path: string,
   accessToken: string,
-  payload: Record<string, unknown>
+  payload: Record<string, unknown>,
+  attempt = 0
 ): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
@@ -73,6 +151,14 @@ async function etsyPost<T>(
     cache: "no-store",
   });
 
+  if (res.status === 429 && attempt < 1) {
+    const retryAfterSec = parseInt(res.headers.get("Retry-After") ?? "0", 10);
+    const backoffMs = retryAfterSec > 0 ? retryAfterSec * 1_000 : BASE_BACKOFF_MS;
+    console.warn(`[etsy-api] 429 on POST ${path} — waiting ${backoffMs}ms before retry`);
+    await delay(backoffMs);
+    return etsyPost<T>(path, accessToken, payload, 1);
+  }
+
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new EtsyApiError(res.status, body);
@@ -81,16 +167,7 @@ async function etsyPost<T>(
   return res.json() as Promise<T>;
 }
 
-export class EtsyApiError extends Error {
-  constructor(
-    public readonly status: number,
-    public readonly body: string
-  ) {
-    super(`Etsy API ${status}: ${body.slice(0, 200)}`);
-    this.name = "EtsyApiError";
-  }
-  get isUnauthorized() { return this.status === 401; }
-}
+/* ─────────────────────────── public API ─────────────────────── */
 
 /**
  * Extract the user_id embedded in the Etsy access token prefix.
@@ -104,36 +181,31 @@ export function getUserIdFromToken(accessToken: string): number {
   return id;
 }
 
-/** Get the currently authenticated Etsy user by user_id */
 export async function getUser(userId: number, accessToken: string): Promise<EtsyUser> {
   return etsyGet<EtsyUser>(`/users/${userId}`, accessToken);
 }
 
-/** Get the shop owned by a given user_id (requires shops_r scope) */
 export async function getUserShop(userId: number, accessToken: string): Promise<EtsyShop> {
   return etsyGet<EtsyShop>(`/users/${userId}/shops`, accessToken);
 }
 
-/** Get a shop by shop_id */
 export async function getShop(shopId: number, accessToken: string): Promise<EtsyShop> {
   return etsyGet<EtsyShop>(`/shops/${shopId}`, accessToken);
 }
 
 /**
  * Get open (paid, not yet shipped) receipts for a shop.
- * Etsy max limit is 100 per page.
+ * Etsy max page size is 100.
  *
- * We pass min_created = 60 days ago so we only pull recent orders.
- * Orders older than that which Etsy still considers "unshipped" are
- * almost certainly orders the seller shipped without updating Etsy —
- * they shouldn't show up as urgent in the dashboard.
+ * windowDays: only fetch receipts created within this many days. Older
+ * receipts are operationally irrelevant for the OMS dashboard.
  */
 export async function getOpenReceipts(
   shopId: number,
   accessToken: string,
   limit = 100,
   offset = 0,
-  windowDays = 60
+  windowDays = 30
 ): Promise<EtsyReceiptsResponse> {
   const minCreated = Math.floor(
     (Date.now() - windowDays * 24 * 60 * 60 * 1000) / 1000
@@ -154,57 +226,67 @@ export async function getOpenReceipts(
 }
 
 /**
- * Fetch images for a list of listing IDs.
- * Returns a Map of listing_id → primary image URL (url_170x135 preferred).
+ * Fetch images for a list of listing IDs from the Etsy API.
  *
- * Etsy v3 receipt transactions only carry listing_id, not the image URLs —
- * this separate call is required to display product thumbnails.
+ * Calls are made SEQUENTIALLY with a IMAGE_FETCH_INTERVAL_MS delay between
+ * each one. This is intentional: parallel Promise.all would fire all requests
+ * simultaneously and instantly saturate the 5 QPS limit.
  *
- * We use individual GET /listings/{id}/images calls (parallel) rather than
- * the batch endpoint because the batch endpoint has serialisation quirks
- * that make it unreliable across different Etsy API versions.
+ * Callers should pass only the listing IDs that are NOT already cached in
+ * Supabase — see getCachedImageMap in the sync route.
+ *
+ * Returns a Map<listing_id, primary_image_url>.
  */
 export async function getListingImageMap(
   listingIds: number[],
   accessToken: string
 ): Promise<Map<number, string>> {
   const imageMap = new Map<number, string>();
-  if (listingIds.length === 0) {
-    console.log("[sync] getListingImageMap: no listing_ids to fetch");
-    return imageMap;
+  if (listingIds.length === 0) return imageMap;
+
+  console.log(`[etsy-api] fetching ${listingIds.length} listing image(s) sequentially`);
+
+  for (const listingId of listingIds) {
+    try {
+      const res = await etsyGet<{ count: number; results: ListingImage[] }>(
+        `/listings/${listingId}/images`,
+        accessToken
+      );
+      const first = (res.results ?? [])[0];
+      if (first) {
+        const url = first.url_170x135 ?? first.url_75x75 ?? first.url_570xN;
+        imageMap.set(listingId, url);
+      } else {
+        console.warn(`[etsy-api] listing ${listingId}: no images returned`);
+      }
+    } catch (e) {
+      // Log and continue — a missing image falls back to the placeholder UI.
+      // If the error is a 429 that survived all retries, it will be an
+      // EtsyApiError with status 429; the caller can check for this.
+      console.error(
+        `[etsy-api] image fetch failed for listing ${listingId}:`,
+        e instanceof Error ? e.message : String(e)
+      );
+
+      if (e instanceof EtsyApiError && e.isRateLimited) {
+        // Rate-limited even after retries — abort the entire loop to protect
+        // the remaining daily quota. Cached images will still be available.
+        console.error("[etsy-api] 429 persisted after all retries — aborting image fetch loop");
+        break;
+      }
+    }
+
+    // Throttle: pause between each call to stay under 5 QPS
+    await delay(IMAGE_FETCH_INTERVAL_MS);
   }
 
-  console.log("[sync] fetching images for listing_ids:", listingIds);
-
-  await Promise.all(
-    listingIds.map(async (listingId) => {
-      try {
-        const res = await etsyGet<{ count: number; results: ListingImage[] }>(
-          `/listings/${listingId}/images`,
-          accessToken
-        );
-        const images: ListingImage[] = res.results ?? [];
-        const first = images[0];
-        if (first) {
-          const url = first.url_170x135 ?? first.url_75x75 ?? first.url_570xN;
-          imageMap.set(listingId, url);
-          console.log(`[sync] listing ${listingId} image:`, url);
-        } else {
-          console.log(`[sync] listing ${listingId}: no images in response`, JSON.stringify(res).slice(0, 200));
-        }
-      } catch (e) {
-        console.error(`[sync] listing image fetch failed for ${listingId}:`, e instanceof Error ? e.message : String(e));
-      }
-    })
-  );
-
-  console.log("[sync] imageMap size:", imageMap.size);
+  console.log(`[etsy-api] image map built: ${imageMap.size}/${listingIds.length} fetched`);
   return imageMap;
 }
 
 /**
- * Refresh an expired access token using the refresh_token.
- * Etsy access tokens expire after 3600 seconds (1 hour).
+ * Refresh an expired Etsy access token using the stored refresh_token.
+ * Etsy access tokens expire after 3,600 seconds (1 hour).
  */
 export async function refreshAccessToken(
   refreshToken: string
@@ -231,10 +313,10 @@ export async function refreshAccessToken(
 }
 
 /**
- * Create a shipment / add tracking to a receipt on Etsy.
+ * Add a tracking number to a receipt on Etsy (marks it as shipped).
  * Requires the `transactions_w` OAuth scope on the access token.
- * Throws EtsyApiError if the scope is missing (401) — callers should
- * catch this and fall back to local-only marking.
+ * Callers should catch EtsyApiError(401) and fall back to local-only marking
+ * if the connected token predates the transactions_w scope addition.
  */
 export async function createEtsyShipment(
   shopId: number,
@@ -256,16 +338,14 @@ export async function createEtsyShipment(
 
 /**
  * Compute the earliest expected_ship_date from a receipt's transactions.
- * Falls back to creation time + max_processing_days if no explicit date.
+ * Falls back to creation_timestamp + max_processing_days if no explicit date.
  */
 export function computeShipDate(receipt: {
   transactions: { expected_ship_date: number | null; max_processing_days: number | null }[];
   create_timestamp: number;
 }): Date | null {
   for (const t of receipt.transactions) {
-    if (t.expected_ship_date) {
-      return new Date(t.expected_ship_date * 1000);
-    }
+    if (t.expected_ship_date) return new Date(t.expected_ship_date * 1000);
   }
   const maxDays = receipt.transactions.reduce(
     (max, t) => Math.max(max, t.max_processing_days ?? 3),
